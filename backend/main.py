@@ -1,647 +1,1169 @@
-# main.py - Intelligence Document Processor
+"""
+Intelligence Document Analyzer Backend
+FastAPI server for document analysis and intelligence extraction
+"""
 
 import os
-import io
-import re
-import json
-import spacy
-import pandas as pd
-from typing import Dict, List, Any, Optional, Union
-from datetime import datetime, timedelta
-import numpy as np
+import uuid
+import time
+import tempfile
+from datetime import datetime
+from typing import List, Dict, Any, Optional, Tuple
+import logging
 
-# File processing imports
-import PyPDF2
-import pdfplumber
-from docx import Document
-import pytesseract
-from PIL import Image
-import easyocr
-
-# FastAPI imports
-from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 import uvicorn
 
-# Machine Learning imports
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LinearRegression
-from textblob import TextBlob
+# NLP and Analysis Libraries
+import spacy
+import re
+from collections import Counter, defaultdict
 import nltk
-from collections import Counter
+from nltk.sentiment import SentimentIntensityAnalyzer
+from nltk.tokenize import sent_tokenize, word_tokenize
 
-app = FastAPI(title="Intelligence Document Analyzer", version="2.0.0")
+# Document Processing Libraries
+import PyPDF2
+import docx
+import pandas as pd
+from io import StringIO, BytesIO
 
-# CORS setup
+# Download required NLTK data
+try:
+    nltk.download('punkt', quiet=True)
+    nltk.download('vader_lexicon', quiet=True)
+    nltk.download('stopwords', quiet=True)
+except:
+    pass
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Intelligence Document Analyzer API",
+    description="AI-Powered Security Intelligence Platform for Document Analysis",
+    version="3.0.0"
+)
+
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Download required NLTK data
+# Load spaCy model
 try:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
-    nltk.download('vader_lexicon', quiet=True)
+    nlp = spacy.load("en_core_web_sm")
+    logger.info("SpaCy model loaded successfully")
+except OSError:
+    logger.error("SpaCy model not found. Please run: python -m spacy download en_core_web_sm")
+    nlp = None
+
+# Initialize sentiment analyzer
+try:
+    sia = SentimentIntensityAnalyzer()
+    logger.info("NLTK sentiment analyzer loaded successfully")
 except:
-    pass
-
-# Load NLP model
-nlp = spacy.load("en_core_web_sm")
-
-# Initialize OCR
-easyocr_reader = easyocr.Reader(['en'])
+    logger.error("NLTK sentiment analyzer failed to load")
+    sia = None
 
 
-class DocumentProcessor:
-    """Comprehensive document processing for intelligence analysis"""
+# Data Models
+class DocumentMetadata(BaseModel):
+    filename: str
+    file_type: str
+    uploaded_at: str
+    file_size: int
 
+
+class DocumentClassification(BaseModel):
+    primary_type: str
+    sub_types: List[str]
+    confidence: float
+    security_classification: str
+
+
+class SentimentAnalysis(BaseModel):
+    overall_sentiment: str
+    sentiment_score: float
+    threat_level: str
+    urgency_indicators: List[str]
+
+
+class GeographicIntelligence(BaseModel):
+    states: List[str]
+    cities: List[str]
+    countries: List[str]
+    coordinates: List[Dict[str, Any]]
+    total_locations: int
+    other_locations: List[str]
+
+
+class TemporalIntelligence(BaseModel):
+    dates_mentioned: List[str]
+    time_periods: List[str]
+    months_mentioned: List[str]
+    years_mentioned: List[str]
+    temporal_patterns: List[str]
+
+
+class NumericalIntelligence(BaseModel):
+    incidents: List[int]
+    casualties: List[int]
+    weapons: List[int]
+    arrests: List[int]
+    monetary_values: List[float]
+
+
+class CrimePatterns(BaseModel):
+    primary_crimes: List[Tuple[str, int]]
+    crime_frequency: Dict[str, int]
+    crime_trends: List[Dict[str, Any]]
+
+
+class TextStatistics(BaseModel):
+    word_count: int
+    sentence_count: int
+    paragraph_count: int
+    readability_score: float
+    language: str
+
+
+class DocumentAnalysis(BaseModel):
+    document_classification: DocumentClassification
+    entities: Dict[str, List[str]]
+    sentiment_analysis: SentimentAnalysis
+    geographic_intelligence: GeographicIntelligence
+    temporal_intelligence: TemporalIntelligence
+    numerical_intelligence: NumericalIntelligence
+    crime_patterns: CrimePatterns
+    relationships: List[Dict[str, Any]]
+    text_statistics: TextStatistics
+    intelligence_summary: str
+    confidence_score: float
+    processing_time: float
+
+
+class AnalyzedDocument(BaseModel):
+    id: str
+    content: str
+    metadata: DocumentMetadata
+    analysis: DocumentAnalysis
+
+
+# Intelligence Analysis Engine
+class IntelligenceAnalyzer:
     def __init__(self):
-        self.processed_documents = {}
-        self.intelligence_patterns = self._load_intelligence_patterns()
-
-    def _load_intelligence_patterns(self) -> Dict[str, List[str]]:
-        """Define patterns for extracting intelligence data"""
-        return {
-            'incidents': [
-                r'(\d+)\s*(?:incidents?|cases?|attacks?|events?)',
-                r'total\s+of\s+(\d+)',
-                r'(\d+)\s*criminal\s+activities?'
-            ],
-            'casualties': [
-                r'(\d+)\s*(?:casualties|fatalities|deaths?|killed)',
-                r'(\d+)\s*(?:persons?|people)\s+(?:lost\s+their\s+lives?|died|killed)',
-                r'(\d+)\s*lives?\s+lost'
-            ],
-            'weapons': [
-                r'(\d+)\s*(?:AK-?47s?|rifles?|guns?|weapons?)',
-                r'(\d+)\s*(?:pistols?|firearms?|ammunition)',
-                r'recovered\s+(\d+)'
-            ],
-            'arrests': [
-                r'(\d+)\s*(?:arrests?|suspects?|apprehended)',
-                r'(\d+)\s*(?:criminals?|perpetrators?)\s+(?:arrested|caught)'
-            ],
-            'locations': [
-                r'(?:in|at)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\s+(?:State|LGA|Local|Area)',
-                r'([A-Z][a-z]+)\s+State',
-                r'(?:Abuja|FCT)'
-            ]
+        self.crime_keywords = {
+            'terrorism': ['terror', 'terrorist', 'bomb', 'explosive', 'attack', 'jihad', 'isis', 'al-qaeda'],
+            'drug_trafficking': ['drug', 'cocaine', 'heroin', 'trafficking', 'smuggling', 'cartel', 'narcotic'],
+            'human_trafficking': ['trafficking', 'slavery', 'prostitution', 'exploitation', 'forced labor'],
+            'cybercrime': ['cyber', 'hacking', 'malware', 'phishing', 'ransomware', 'breach'],
+            'organized_crime': ['mafia', 'gang', 'cartel', 'syndicate', 'racketeering'],
+            'violence': ['murder', 'assault', 'kidnapping', 'robbery', 'violence', 'shooting'],
+            'fraud': ['fraud', 'scam', 'embezzlement', 'money laundering', 'corruption']
         }
 
-    async def process_document(self, file: UploadFile) -> Dict[str, Any]:
-        """Main document processing function"""
-        try:
-            file_content = await file.read()
-            file_extension = file.filename.split('.')[-1].lower()
+        self.weapon_keywords = [
+            'gun', 'rifle', 'pistol', 'weapon', 'firearm', 'ammunition', 'explosive',
+            'bomb', 'grenade', 'ak-47', 'ar-15', 'shotgun', 'revolver'
+        ]
 
-            # Extract text based on file type
+        self.threat_indicators = [
+            'threat', 'danger', 'attack', 'kill', 'destroy', 'eliminate', 'target',
+            'strike', 'hit', 'bomb', 'explode', 'urgent', 'immediate', 'critical'
+        ]
+
+        # Nigerian states and common locations
+        self.nigerian_states = [
+            'lagos', 'kano', 'kaduna', 'oyo', 'rivers', 'bayelsa', 'cross river',
+            'akwa ibom', 'abia', 'anambra', 'imo', 'enugu', 'ebonyi', 'delta',
+            'edo', 'ondo', 'ekiti', 'osun', 'ogun', 'kwara', 'kogi', 'benue',
+            'plateau', 'nasarawa', 'taraba', 'adamawa', 'borno', 'yobe', 'bauchi',
+            'gombe', 'jigawa', 'katsina', 'kebbi', 'sokoto', 'zamfara', 'niger',
+            'abuja', 'fct'
+        ]
+
+    def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
+        """Extract text content from various file formats"""
+        try:
+            file_extension = filename.lower().split('.')[-1]
+
             if file_extension == 'pdf':
-                extracted_text = await self._extract_from_pdf(file_content)
+                return self._extract_from_pdf(file_content)
             elif file_extension in ['doc', 'docx']:
-                extracted_text = await self._extract_from_word(file_content)
+                return self._extract_from_docx(file_content)
             elif file_extension == 'txt':
-                extracted_text = file_content.decode('utf-8', errors='ignore')
-            elif file_extension in ['jpg', 'jpeg', 'png', 'tiff', 'bmp']:
-                extracted_text = await self._extract_from_image_ocr(file_content)
+                return file_content.decode('utf-8', errors='ignore')
+            elif file_extension in ['csv', 'xlsx', 'xls']:
+                return self._extract_from_excel(file_content)
             else:
                 raise ValueError(f"Unsupported file format: {file_extension}")
 
-            # Analyze the extracted text
-            analysis_result = await self._analyze_intelligence_text(
-                extracted_text, file.filename, file_extension
-            )
-
-            # Store processed document
-            doc_id = f"{file.filename}_{datetime.now().isoformat()}"
-            self.processed_documents[doc_id] = {
-                'original_filename': file.filename,
-                'file_type': file_extension,
-                'extracted_text': extracted_text,
-                'analysis': analysis_result,
-                'processed_at': datetime.now().isoformat()
-            }
-
-            return {
-                'document_id': doc_id,
-                'status': 'success',
-                'analysis': analysis_result,
-                'metadata': {
-                    'filename': file.filename,
-                    'file_type': file_extension,
-                    'text_length': len(extracted_text),
-                    'processed_at': datetime.now().isoformat()
-                }
-            }
-
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Error processing document: {str(e)}")
+            logger.error(f"Text extraction error: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
 
-    async def _extract_from_pdf(self, file_content: bytes) -> str:
+    def _extract_from_pdf(self, file_content: bytes) -> str:
         """Extract text from PDF files"""
-        text = ""
-
         try:
-            # Try with pdfplumber first (better for complex PDFs)
-            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
-                for page in pdf.pages:
-                    page_text = page.extract_text()
-                    if page_text:
-                        text += page_text + "\n"
-        except:
-            # Fallback to PyPDF2
-            try:
-                pdf_reader = PyPDF2.PdfReader(io.BytesIO(file_content))
-                for page in pdf_reader.pages:
-                    text += page.extract_text() + "\n"
-            except:
-                # If PDF is scanned/image-based, try OCR
-                return await self._extract_from_pdf_ocr(file_content)
+            pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+            text = ""
+            for page in pdf_reader.pages:
+                text += page.extract_text() + "\n"
+            return text
+        except Exception as e:
+            raise ValueError(f"PDF extraction failed: {str(e)}")
 
-        return text if text.strip() else await self._extract_from_pdf_ocr(file_content)
-
-    async def _extract_from_word(self, file_content: bytes) -> str:
-        """Extract text from Word documents"""
+    def _extract_from_docx(self, file_content: bytes) -> str:
+        """Extract text from DOCX files"""
         try:
-            doc = Document(io.BytesIO(file_content))
+            doc = docx.Document(BytesIO(file_content))
             text = ""
             for paragraph in doc.paragraphs:
                 text += paragraph.text + "\n"
-
-            # Extract text from tables
-            for table in doc.tables:
-                for row in table.rows:
-                    for cell in row.cells:
-                        text += cell.text + " "
-                    text += "\n"
-
             return text
         except Exception as e:
-            raise ValueError(f"Error extracting from Word document: {str(e)}")
+            raise ValueError(f"DOCX extraction failed: {str(e)}")
 
-    async def _extract_from_image_ocr(self, file_content: bytes) -> str:
-        """Extract text from images using OCR"""
+    def _extract_from_excel(self, file_content: bytes) -> str:
+        """Extract text from Excel/CSV files"""
         try:
-            # Convert bytes to PIL Image
-            image = Image.open(io.BytesIO(file_content))
-
-            # Try EasyOCR first
+            # Try reading as Excel first
             try:
-                results = easyocr_reader.readtext(np.array(image))
-                text = " ".join([result[1] for result in results])
-                return text
+                df = pd.read_excel(BytesIO(file_content))
             except:
-                # Fallback to Tesseract
-                text = pytesseract.image_to_string(image)
-                return text
+                # Fallback to CSV
+                df = pd.read_csv(StringIO(file_content.decode('utf-8', errors='ignore')))
 
-        except Exception as e:
-            raise ValueError(f"Error in OCR processing: {str(e)}")
-
-    async def _extract_from_pdf_ocr(self, file_content: bytes) -> str:
-        """Extract text from PDF using OCR (for scanned PDFs)"""
-        try:
-            import pdf2image
-            pages = pdf2image.convert_from_bytes(file_content)
-            text = ""
-
-            for page in pages:
-                # Convert PIL image to numpy array for EasyOCR
-                results = easyocr_reader.readtext(np.array(page))
-                page_text = " ".join([result[1] for result in results])
-                text += page_text + "\n"
-
+            # Convert DataFrame to text
+            text = df.to_string()
             return text
         except Exception as e:
-            # Fallback to simpler OCR
-            return f"OCR extraction failed: {str(e)}"
+            raise ValueError(f"Excel/CSV extraction failed: {str(e)}")
 
-    async def _analyze_intelligence_text(self, text: str, filename: str, file_type: str) -> Dict[str, Any]:
-        """Comprehensive intelligence analysis of extracted text"""
+    def analyze_document(self, text: str, metadata: DocumentMetadata) -> DocumentAnalysis:
+        """Perform comprehensive intelligence analysis on document text"""
+        start_time = time.time()
 
-        # Basic text statistics
-        word_count = len(text.split())
-        sentence_count = len(re.findall(r'[.!?]+', text))
+        # Basic text preprocessing
+        text_lower = text.lower()
+        sentences = sent_tokenize(text)
+        words = word_tokenize(text_lower)
 
-        # Extract numerical intelligence data
-        numerical_data = self._extract_numerical_intelligence(text)
-
-        # Extract locations
-        locations = self._extract_locations(text)
-
-        # Extract dates and time references
-        temporal_data = self._extract_temporal_references(text)
-
-        # Sentiment analysis
-        sentiment = self._analyze_sentiment(text)
-
-        # Extract key entities
+        # Extract entities using spaCy
         entities = self._extract_entities(text)
 
-        # Identify document type and classification
-        doc_classification = self._classify_document(text, filename)
+        # Analyze sentiment and threat level
+        sentiment_analysis = self._analyze_sentiment(text, text_lower)
 
-        # Extract crime patterns
-        crime_patterns = self._extract_crime_patterns(text)
+        # Extract geographic intelligence
+        geographic_intel = self._extract_geographic_intelligence(text, text_lower)
+
+        # Extract temporal intelligence
+        temporal_intel = self._extract_temporal_intelligence(text)
+
+        # Extract numerical intelligence
+        numerical_intel = self._extract_numerical_intelligence(text)
+
+        # Analyze crime patterns
+        crime_patterns = self._analyze_crime_patterns(text_lower)
+
+        # Classify document
+        doc_classification = self._classify_document(text_lower, crime_patterns)
+
+        # Extract relationships
+        relationships = self._extract_relationships(text)
+
+        # Calculate text statistics
+        text_stats = self._calculate_text_statistics(text, sentences, words)
 
         # Generate intelligence summary
         intelligence_summary = self._generate_intelligence_summary(
-            numerical_data, locations, temporal_data, crime_patterns
+            entities, sentiment_analysis, geographic_intel, crime_patterns
         )
 
-        return {
-            'document_classification': doc_classification,
-            'text_statistics': {
-                'word_count': word_count,
-                'sentence_count': sentence_count,
-                'character_count': len(text)
-            },
-            'numerical_intelligence': numerical_data,
-            'geographic_intelligence': locations,
-            'temporal_intelligence': temporal_data,
-            'sentiment_analysis': sentiment,
-            'entities': entities,
-            'crime_patterns': crime_patterns,
-            'intelligence_summary': intelligence_summary,
-            'confidence_score': self._calculate_confidence_score(text, numerical_data)
-        }
+        # Calculate overall confidence score
+        confidence_score = self._calculate_confidence_score(
+            entities, sentiment_analysis, geographic_intel, temporal_intel
+        )
 
-    def _extract_numerical_intelligence(self, text: str) -> Dict[str, List[int]]:
-        """Extract numerical data using intelligence patterns"""
-        results = {}
+        processing_time = time.time() - start_time
 
-        for category, patterns in self.intelligence_patterns.items():
-            numbers = []
-            for pattern in patterns:
-                matches = re.findall(pattern, text, re.IGNORECASE)
-                numbers.extend([int(match) for match in matches if match.isdigit()])
-            results[category] = sorted(set(numbers), reverse=True)  # Remove duplicates, sort desc
-
-        return results
-
-    def _extract_locations(self, text: str) -> Dict[str, Any]:
-        """Extract geographic intelligence"""
-        doc = nlp(text)
-
-        # Nigerian states and major cities
-        nigerian_locations = {
-            'states': [
-                'Zamfara', 'Katsina', 'Kaduna', 'Plateau', 'Niger', 'Kano', 'Sokoto',
-                'Kebbi', 'Jigawa', 'Bauchi', 'Gombe', 'Adamawa', 'Taraba', 'Borno',
-                'Yobe', 'Nasarawa', 'Benue', 'Kogi', 'Lagos', 'Ogun', 'Oyo', 'Osun',
-                'Ekiti', 'Ondo', 'Delta', 'Edo', 'Rivers', 'Bayelsa', 'Cross River',
-                'Akwa Ibom', 'Abia', 'Imo', 'Anambra', 'Enugu', 'Ebonyi'
-            ],
-            'zones': [
-                'North-West', 'North-Central', 'North-East',
-                'South-West', 'South-East', 'South-South'
-            ]
-        }
-
-        found_locations = {'states': [], 'zones': [], 'other_locations': []}
-
-        # Extract using spaCy NER
-        for ent in doc.ents:
-            if ent.label_ in ["GPE", "LOC"]:
-                location = ent.text.strip()
-                if location in nigerian_locations['states']:
-                    found_locations['states'].append(location)
-                elif location in nigerian_locations['zones']:
-                    found_locations['zones'].append(location)
-                else:
-                    found_locations['other_locations'].append(location)
-
-        # Extract using regex patterns
-        for pattern in self.intelligence_patterns['locations']:
-            matches = re.findall(pattern, text, re.IGNORECASE)
-            for match in matches:
-                if match in nigerian_locations['states']:
-                    found_locations['states'].append(match)
-
-        # Remove duplicates and return counts
-        return {
-            'states': list(set(found_locations['states'])),
-            'zones': list(set(found_locations['zones'])),
-            'other_locations': list(set(found_locations['other_locations'])),
-            'total_locations': len(set(found_locations['states'] + found_locations['zones']))
-        }
-
-    def _extract_temporal_references(self, text: str) -> Dict[str, Any]:
-        """Extract time-based intelligence"""
-
-        # Month patterns
-        months = re.findall(
-            r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\b', text,
-            re.IGNORECASE)
-
-        # Year patterns
-        years = re.findall(r'\b(20\d{2})\b', text)
-
-        # Time periods
-        time_periods = re.findall(r'\b(morning|evening|night|dawn|dusk|midnight)\b', text, re.IGNORECASE)
-
-        return {
-            'months_mentioned': list(set([m.lower().capitalize() for m in months])),
-            'years_mentioned': list(set(years)),
-            'time_periods': list(set([t.lower() for t in time_periods])),
-            'temporal_density': len(months) + len(years) + len(time_periods)
-        }
-
-    def _analyze_sentiment(self, text: str) -> Dict[str, Any]:
-        """Analyze sentiment and urgency of the document"""
-        blob = TextBlob(text)
-
-        # Threat level indicators
-        threat_words = ['critical', 'urgent', 'emergency', 'immediate', 'severe', 'high', 'escalating']
-        threat_count = sum(1 for word in threat_words if word in text.lower())
-
-        return {
-            'polarity': blob.sentiment.polarity,  # -1 (negative) to 1 (positive)
-            'subjectivity': blob.sentiment.subjectivity,  # 0 (objective) to 1 (subjective)
-            'threat_level': 'High' if threat_count > 3 else 'Medium' if threat_count > 1 else 'Low',
-            'threat_indicators': threat_count
-        }
+        return DocumentAnalysis(
+            document_classification=doc_classification,
+            entities=entities,
+            sentiment_analysis=sentiment_analysis,
+            geographic_intelligence=geographic_intel,
+            temporal_intelligence=temporal_intel,
+            numerical_intelligence=numerical_intel,
+            crime_patterns=crime_patterns,
+            relationships=relationships,
+            text_statistics=text_stats,
+            intelligence_summary=intelligence_summary,
+            confidence_score=confidence_score,
+            processing_time=processing_time
+        )
 
     def _extract_entities(self, text: str) -> Dict[str, List[str]]:
-        """Extract named entities and key terms"""
-        doc = nlp(text)
-
+        """Extract named entities using spaCy NLP"""
         entities = {
             'persons': [],
             'organizations': [],
             'locations': [],
-            'dates': [],
-            'money': [],
-            'weapons': []
+            'weapons': [],
+            'vehicles': [],
+            'dates': []
         }
 
-        # Extract using spaCy NER
-        for ent in doc.ents:
-            if ent.label_ == "PERSON":
-                entities['persons'].append(ent.text)
-            elif ent.label_ == "ORG":
-                entities['organizations'].append(ent.text)
-            elif ent.label_ in ["GPE", "LOC"]:
-                entities['locations'].append(ent.text)
-            elif ent.label_ == "DATE":
-                entities['dates'].append(ent.text)
-            elif ent.label_ == "MONEY":
-                entities['money'].append(ent.text)
+        if nlp is None:
+            return entities
 
-        # Extract weapons mentions
-        weapon_patterns = r'\b(AK-?47|rifle|pistol|gun|weapon|ammunition|explosive|IED)\b'
-        weapons = re.findall(weapon_patterns, text, re.IGNORECASE)
-        entities['weapons'] = list(set(weapons))
+        try:
+            doc = nlp(text)
 
-        # Remove duplicates
-        for key in entities:
-            entities[key] = list(set(entities[key]))
+            for ent in doc.ents:
+                if ent.label_ == "PERSON":
+                    entities['persons'].append(ent.text)
+                elif ent.label_ == "ORG":
+                    entities['organizations'].append(ent.text)
+                elif ent.label_ in ["GPE", "LOC"]:
+                    entities['locations'].append(ent.text)
+                elif ent.label_ == "DATE":
+                    entities['dates'].append(ent.text)
+
+            # Extract weapons using keyword matching
+            text_lower = text.lower()
+            for weapon in self.weapon_keywords:
+                if weapon in text_lower:
+                    entities['weapons'].append(weapon)
+
+            # Extract vehicles using simple patterns
+            vehicle_patterns = [
+                r'\b(car|truck|motorcycle|bike|vehicle|van|suv)\b',
+                r'\b(toyota|honda|ford|mercedes|bmw|volkswagen)\b'
+            ]
+            for pattern in vehicle_patterns:
+                matches = re.findall(pattern, text_lower)
+                entities['vehicles'].extend(matches)
+
+            # Remove duplicates and clean up
+            for key in entities:
+                entities[key] = list(set(entities[key]))
+
+        except Exception as e:
+            logger.error(f"Entity extraction error: {str(e)}")
 
         return entities
 
-    def _classify_document(self, text: str, filename: str) -> Dict[str, Any]:
-        """Classify the document type and extract metadata"""
+    def _analyze_sentiment(self, text: str, text_lower: str) -> SentimentAnalysis:
+        """Analyze sentiment and determine threat level"""
+        try:
+            if sia:
+                scores = sia.polarity_scores(text)
+                sentiment_score = scores['compound']
 
-        # Document type classification
-        doc_types = {
-            'intelligence_report': ['intelligence', 'report', 'analysis', 'assessment'],
-            'incident_report': ['incident', 'occurrence', 'event', 'case'],
-            'security_briefing': ['briefing', 'update', 'situation', 'sitrep'],
-            'operational_report': ['operation', 'ops', 'mission', 'deployment']
-        }
+                if sentiment_score >= 0.05:
+                    overall_sentiment = "positive"
+                elif sentiment_score <= -0.05:
+                    overall_sentiment = "negative"
+                else:
+                    overall_sentiment = "neutral"
+            else:
+                # Fallback simple sentiment analysis
+                positive_words = ['good', 'great', 'excellent', 'positive', 'success']
+                negative_words = ['bad', 'terrible', 'negative', 'fail', 'problem']
 
-        classification_scores = {}
-        text_lower = text.lower()
+                pos_count = sum(1 for word in positive_words if word in text_lower)
+                neg_count = sum(1 for word in negative_words if word in text_lower)
 
-        for doc_type, keywords in doc_types.items():
-            score = sum(1 for keyword in keywords if keyword in text_lower)
-            classification_scores[doc_type] = score
+                if pos_count > neg_count:
+                    overall_sentiment = "positive"
+                    sentiment_score = 0.1
+                elif neg_count > pos_count:
+                    overall_sentiment = "negative"
+                    sentiment_score = -0.1
+                else:
+                    overall_sentiment = "neutral"
+                    sentiment_score = 0.0
 
-        # Determine primary classification
-        primary_type = max(classification_scores, key=classification_scores.get)
+            # Determine threat level based on keywords
+            threat_count = sum(1 for indicator in self.threat_indicators if indicator in text_lower)
 
-        # Extract security classification
-        security_patterns = r'\b(SECRET|CONFIDENTIAL|RESTRICTED|CLASSIFIED|UNCLASSIFIED)\b'
-        security_classifications = re.findall(security_patterns, text, re.IGNORECASE)
+            if threat_count >= 5:
+                threat_level = "High"
+            elif threat_count >= 2:
+                threat_level = "Medium"
+            else:
+                threat_level = "Low"
 
-        return {
-            'primary_type': primary_type,
-            'confidence': classification_scores[primary_type] / len(doc_types[primary_type]) if doc_types[
-                primary_type] else 0,
-            'security_classification': security_classifications[0] if security_classifications else 'UNCLASSIFIED',
-            'classification_scores': classification_scores
-        }
+            # Extract urgency indicators
+            urgency_indicators = [indicator for indicator in self.threat_indicators if indicator in text_lower]
 
-    def _extract_crime_patterns(self, text: str) -> Dict[str, Any]:
-        """Extract crime patterns and modus operandi"""
+            return SentimentAnalysis(
+                overall_sentiment=overall_sentiment,
+                sentiment_score=sentiment_score,
+                threat_level=threat_level,
+                urgency_indicators=urgency_indicators[:10]  # Limit to 10
+            )
 
-        crime_types = {
-            'armed_robbery': r'\b(armed\s+robbery|robbery|banditry)\b',
-            'cattle_rustling': r'\b(cattle\s+rustling|livestock|animals?\s+rustled)\b',
-            'kidnapping': r'\b(kidnapping|abduction|hostage)\b',
-            'murder': r'\b(murder|killing|homicide|assassination)\b',
-            'terrorism': r'\b(terrorism|terrorist|insurgency|extremist)\b'
-        }
+        except Exception as e:
+            logger.error(f"Sentiment analysis error: {str(e)}")
+            return SentimentAnalysis(
+                overall_sentiment="neutral",
+                sentiment_score=0.0,
+                threat_level="Low",
+                urgency_indicators=[]
+            )
 
-        patterns = {}
-        for crime, pattern in crime_types.items():
-            matches = len(re.findall(pattern, text, re.IGNORECASE))
-            if matches > 0:
-                patterns[crime] = matches
+    def _extract_geographic_intelligence(self, text: str, text_lower: str) -> GeographicIntelligence:
+        """Extract geographic information and locations"""
+        try:
+            states = []
+            cities = []
+            countries = []
+            coordinates = []
+            other_locations = []
 
-        # Extract modus operandi keywords
-        mo_keywords = re.findall(r'\b(motorcycle|forest|highway|checkpoint|raid|attack|escape)\b', text, re.IGNORECASE)
+            # Extract Nigerian states (improved detection)
+            for state in self.nigerian_states:
+                # Check for exact matches and common variations
+                variations = [state, state.replace(' ', ''), f"{state} state"]
+                for variation in variations:
+                    if variation in text_lower:
+                        state_title = state.title()
+                        if state_title not in states:
+                            states.append(state_title)
 
-        return {
-            'crime_frequencies': patterns,
-            'primary_crimes': sorted(patterns.items(), key=lambda x: x[1], reverse=True)[:3],
-            'modus_operandi_indicators': list(set([m.lower() for m in mo_keywords]))
-        }
+            # Enhanced coordinate extraction patterns
+            coord_patterns = [
+                # Decimal degrees: lat, lon
+                r'(-?\d+\.?\d*)[°\s,]+(-?\d+\.?\d*)[°\s]*',
+                # Degrees minutes seconds
+                r'(\d+)[°]\s*(\d+)[\']\s*(\d+\.?\d*)[\"]\s*([NS])\s*,?\s*(\d+)[°]\s*(\d+)[\']\s*(\d+\.?\d*)[\"]\s*([EW])',
+                # GPS coordinates in brackets
+                r'\[(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\]',
+                # Coordinates with labels
+                r'lat[itude]*[:=\s]*(-?\d+\.?\d*)[,\s]*lon[gitude]*[:=\s]*(-?\d+\.?\d*)',
+                # Nigerian common coordinate formats
+                r'(\d+\.?\d*)[°\s]*N[orth]*[,\s]*(\d+\.?\d*)[°\s]*E[ast]*'
+            ]
 
-    def _generate_intelligence_summary(self, numerical_data: Dict, locations: Dict,
-                                       temporal_data: Dict, crime_patterns: Dict) -> str:
-        """Generate an AI-powered intelligence summary"""
+            for pattern in coord_patterns:
+                matches = re.finditer(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    try:
+                        groups = match.groups()
+                        if len(groups) >= 2:
+                            if len(groups) == 2:  # Simple lat, lon
+                                lat, lon = float(groups[0]), float(groups[1])
+                            elif len(groups) == 8:  # DMS format
+                                # Convert DMS to decimal degrees
+                                lat_deg, lat_min, lat_sec, lat_dir = groups[0:4]
+                                lon_deg, lon_min, lon_sec, lon_dir = groups[4:8]
 
-        summary_parts = []
+                                lat = float(lat_deg) + float(lat_min) / 60 + float(lat_sec) / 3600
+                                lon = float(lon_deg) + float(lon_min) / 60 + float(lon_sec) / 3600
 
-        # Incident summary
-        if numerical_data.get('incidents'):
-            max_incidents = max(numerical_data['incidents'])
-            summary_parts.append(f"Document reports {max_incidents} incidents")
+                                if lat_dir.upper() == 'S':
+                                    lat = -lat
+                                if lon_dir.upper() == 'W':
+                                    lon = -lon
+                            else:
+                                continue
 
-        # Casualty summary
-        if numerical_data.get('casualties'):
-            max_casualties = max(numerical_data['casualties'])
-            summary_parts.append(f"{max_casualties} casualties recorded")
+                            # Validate coordinates for Nigeria region
+                            if 4.0 <= lat <= 14.0 and 2.0 <= lon <= 15.0:
+                                # Find nearby location name
+                                location_name = self._find_location_context(text, match.start(), match.end())
 
-        # Geographic summary
-        if locations['states']:
-            primary_states = ', '.join(locations['states'][:3])
-            summary_parts.append(f"Primary affected areas: {primary_states}")
+                                coordinates.append({
+                                    'latitude': round(lat, 6),
+                                    'longitude': round(lon, 6),
+                                    'location_name': location_name or 'Unidentified Location',
+                                    'confidence': 0.9
+                                })
+                    except (ValueError, IndexError):
+                        continue
 
-        # Crime summary
-        if crime_patterns['primary_crimes']:
-            primary_crime = crime_patterns['primary_crimes'][0][0]
-            summary_parts.append(f"Dominant crime type: {primary_crime.replace('_', ' ').title()}")
+            # Extract locations using spaCy if available with better context
+            if nlp:
+                doc = nlp(text)
+                for ent in doc.ents:
+                    if ent.label_ == "GPE":  # Geopolitical entity
+                        location = ent.text.strip()
+                        location_lower = location.lower()
 
-        # Temporal summary
-        if temporal_data['months_mentioned']:
-            months = ', '.join(temporal_data['months_mentioned'][:2])
-            summary_parts.append(f"Time frame: {months}")
+                        # Check if it's a Nigerian state
+                        if any(state.lower() in location_lower for state in self.nigerian_states):
+                            matching_state = next(
+                                state for state in self.nigerian_states if state.lower() in location_lower)
+                            if matching_state.title() not in states:
+                                states.append(matching_state.title())
+                        # Check if it's a known Nigerian city
+                        elif location_lower in ['lagos', 'abuja', 'kano', 'ibadan', 'port harcourt', 'benin city']:
+                            if location.title() not in cities:
+                                cities.append(location.title())
+                        # Check if it's a country
+                        elif location_lower in ['nigeria', 'cameroon', 'chad', 'niger', 'benin']:
+                            if location.title() not in countries:
+                                countries.append(location.title())
+                        else:
+                            # Add to other locations if not already categorized
+                            if location not in other_locations and len(location) > 2:
+                                other_locations.append(location)
 
-        return ". ".join(summary_parts) + "." if summary_parts else "Limited intelligence data extracted."
+            # Extract street addresses and landmarks
+            address_patterns = [
+                r'\b\d+\s+[A-Za-z\s]+(?:Street|Road|Avenue|Drive|Lane|Close|Crescent)\b',
+                r'\b[A-Za-z\s]+(?:Street|Road|Avenue|Drive|Lane|Close|Crescent)\s+\d*\b',
+                r'\b(?:Plot|Block|House)\s+\d+[A-Za-z]?\b'
+            ]
 
-    def _calculate_confidence_score(self, text: str, numerical_data: Dict) -> float:
-        """Calculate confidence score for the extraction"""
+            for pattern in address_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    if match.strip() not in other_locations:
+                        other_locations.append(match.strip())
 
-        score = 0.0
+            # Extract landmarks and facilities
+            landmark_patterns = [
+                r'\b[A-Za-z\s]+(?:Airport|Hospital|University|School|Market|Mall|Bridge|Stadium)\b',
+                r'\b(?:National|Federal|State)\s+[A-Za-z\s]+\b'
+            ]
 
-        # Text quality indicators
-        if len(text) > 500:
-            score += 0.2
-        if len(re.findall(r'\d+', text)) > 5:
-            score += 0.2
+            for pattern in landmark_patterns:
+                matches = re.findall(pattern, text, re.IGNORECASE)
+                for match in matches:
+                    if match.strip() not in other_locations and len(match.strip()) > 5:
+                        other_locations.append(match.strip())
 
-        # Data extraction success
-        if any(numerical_data.values()):
-            score += 0.3
+            # Remove duplicates and clean up
+            states = list(set(states))
+            cities = list(set(cities))
+            countries = list(set(countries))
+            other_locations = list(set(other_locations))
 
-        # Structure indicators
-        if any(word in text.lower() for word in ['report', 'analysis', 'summary']):
-            score += 0.2
+            # Remove overlaps (don't include states in other_locations)
+            other_locations = [loc for loc in other_locations if
+                               not any(state.lower() in loc.lower() for state in states)]
 
-        # Date/time references
-        if re.findall(r'\b(January|February|March|April|May|June|July|August|September|October|November|December)\b',
-                      text, re.IGNORECASE):
-            score += 0.1
+            total_locations = len(states) + len(cities) + len(countries) + len(other_locations) + len(coordinates)
 
-        return min(score, 1.0)
+            return GeographicIntelligence(
+                states=states,
+                cities=cities,
+                countries=countries,
+                coordinates=coordinates,
+                total_locations=total_locations,
+                other_locations=other_locations[:20]  # Limit to 20 to avoid clutter
+            )
+
+        except Exception as e:
+            logger.error(f"Geographic intelligence error: {str(e)}")
+            return GeographicIntelligence(
+                states=[], cities=[], countries=[], coordinates=[],
+                total_locations=0, other_locations=[]
+            )
+
+    def _find_location_context(self, text: str, start: int, end: int) -> Optional[str]:
+        """Find location name near coordinates"""
+        try:
+            # Look for location names within 100 characters before or after coordinates
+            context_start = max(0, start - 100)
+            context_end = min(len(text), end + 100)
+            context = text[context_start:context_end]
+
+            # Extract potential location names
+            location_patterns = [
+                r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b',  # Capitalized words
+                r'\b(?:near|at|in|around)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b'  # Near/at/in location
+            ]
+
+            for pattern in location_patterns:
+                matches = re.findall(pattern, context)
+                if matches:
+                    # Return the first reasonable match
+                    for match in matches:
+                        if isinstance(match, tuple):
+                            match = match[0] if match[0] else match[1]
+                        if len(match) > 2 and not match.lower() in ['the', 'and', 'of', 'in', 'at']:
+                            return match
+
+            return None
+        except Exception:
+            return None
+
+    def _extract_temporal_intelligence(self, text: str) -> TemporalIntelligence:
+        """Extract temporal information and patterns"""
+        try:
+            dates_mentioned = []
+            time_periods = []
+            months_mentioned = []
+            years_mentioned = []
+            temporal_patterns = []
+
+            # Extract dates using regex patterns
+            date_patterns = [
+                r'\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b',  # MM/DD/YYYY or DD/MM/YYYY
+                r'\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b',  # YYYY/MM/DD
+                r'\b\w+ \d{1,2}, \d{4}\b',  # Month DD, YYYY
+                r'\b\d{1,2} \w+ \d{4}\b'  # DD Month YYYY
+            ]
+
+            for pattern in date_patterns:
+                matches = re.findall(pattern, text)
+                dates_mentioned.extend(matches)
+
+            # Extract months
+            months = ['january', 'february', 'march', 'april', 'may', 'june',
+                      'july', 'august', 'september', 'october', 'november', 'december']
+            text_lower = text.lower()
+
+            for month in months:
+                if month in text_lower:
+                    months_mentioned.append(month.title())
+
+            # Extract years
+            year_pattern = r'\b(19|20)\d{2}\b'
+            years = re.findall(year_pattern, text)
+            years_mentioned = [f"{year[0]}{year[1:]}" for year in years]
+
+            # Extract time periods
+            time_period_keywords = ['morning', 'afternoon', 'evening', 'night', 'dawn', 'dusk']
+            for period in time_period_keywords:
+                if period in text_lower:
+                    time_periods.append(period)
+
+            # Identify temporal patterns
+            if len(dates_mentioned) > 1:
+                temporal_patterns.append("Multiple dates referenced")
+            if len(years_mentioned) > 1:
+                temporal_patterns.append("Multi-year timeline")
+
+            return TemporalIntelligence(
+                dates_mentioned=list(set(dates_mentioned)),
+                time_periods=list(set(time_periods)),
+                months_mentioned=list(set(months_mentioned)),
+                years_mentioned=list(set(years_mentioned)),
+                temporal_patterns=temporal_patterns
+            )
+
+        except Exception as e:
+            logger.error(f"Temporal intelligence error: {str(e)}")
+            return TemporalIntelligence(
+                dates_mentioned=[], time_periods=[], months_mentioned=[],
+                years_mentioned=[], temporal_patterns=[]
+            )
+
+    def _extract_numerical_intelligence(self, text: str) -> NumericalIntelligence:
+        """Extract numerical data and statistics"""
+        try:
+            incidents = []
+            casualties = []
+            weapons = []
+            arrests = []
+            monetary_values = []
+
+            # Extract numbers using regex
+            number_pattern = r'\b\d+\b'
+            numbers = [int(match) for match in re.findall(number_pattern, text)]
+
+            # Context-based classification
+            text_lower = text.lower()
+
+            # Extract incident counts
+            incident_patterns = [
+                r'(\d+)\s*(incident|attack|occurrence)',
+                r'(incident|attack|occurrence).*?(\d+)'
+            ]
+            for pattern in incident_patterns:
+                matches = re.findall(pattern, text_lower)
+                for match in matches:
+                    for item in match:
+                        if item.isdigit():
+                            incidents.append(int(item))
+
+            # Extract casualty counts
+            casualty_patterns = [
+                r'(\d+)\s*(dead|killed|casualt|victim|injur)',
+                r'(dead|killed|casualt|victim|injur).*?(\d+)'
+            ]
+            for pattern in casualty_patterns:
+                matches = re.findall(pattern, text_lower)
+                for match in matches:
+                    for item in match:
+                        if item.isdigit():
+                            casualties.append(int(item))
+
+            # Extract weapon counts
+            weapon_patterns = [
+                r'(\d+)\s*(gun|rifle|weapon|firearm)',
+                r'(gun|rifle|weapon|firearm).*?(\d+)'
+            ]
+            for pattern in weapon_patterns:
+                matches = re.findall(pattern, text_lower)
+                for match in matches:
+                    for item in match:
+                        if item.isdigit():
+                            weapons.append(int(item))
+
+            # Extract arrest counts
+            arrest_patterns = [
+                r'(\d+)\s*(arrest|detain|capture)',
+                r'(arrest|detain|capture).*?(\d+)'
+            ]
+            for pattern in arrest_patterns:
+                matches = re.findall(pattern, text_lower)
+                for match in matches:
+                    for item in match:
+                        if item.isdigit():
+                            arrests.append(int(item))
+
+            # Extract monetary values
+            money_pattern = r'[$₦]\s*(\d+(?:,\d{3})*(?:\.\d{2})?)'
+            money_matches = re.findall(money_pattern, text)
+            for match in money_matches:
+                try:
+                    value = float(match.replace(',', ''))
+                    monetary_values.append(value)
+                except ValueError:
+                    continue
+
+            return NumericalIntelligence(
+                incidents=incidents,
+                casualties=casualties,
+                weapons=weapons,
+                arrests=arrests,
+                monetary_values=monetary_values
+            )
+
+        except Exception as e:
+            logger.error(f"Numerical intelligence error: {str(e)}")
+            return NumericalIntelligence(
+                incidents=[], casualties=[], weapons=[],
+                arrests=[], monetary_values=[]
+            )
+
+    def _analyze_crime_patterns(self, text_lower: str) -> CrimePatterns:
+        """Analyze crime patterns and frequencies"""
+        try:
+            crime_frequency = defaultdict(int)
+
+            # Count crime-related keywords
+            for crime_type, keywords in self.crime_keywords.items():
+                for keyword in keywords:
+                    if keyword in text_lower:
+                        crime_frequency[crime_type] += text_lower.count(keyword)
+
+            # Get primary crimes (top 5)
+            primary_crimes = sorted(crime_frequency.items(), key=lambda x: x[1], reverse=True)[:5]
+
+            # Generate crime trends (simplified)
+            crime_trends = []
+            for crime_type, count in primary_crimes:
+                if count > 5:
+                    trend = "increasing"
+                elif count > 2:
+                    trend = "stable"
+                else:
+                    trend = "decreasing"
+
+                crime_trends.append({
+                    'crime_type': crime_type,
+                    'trend': trend,
+                    'confidence': min(count / 10.0, 1.0)
+                })
+
+            return CrimePatterns(
+                primary_crimes=primary_crimes,
+                crime_frequency=dict(crime_frequency),
+                crime_trends=crime_trends
+            )
+
+        except Exception as e:
+            logger.error(f"Crime pattern analysis error: {str(e)}")
+            return CrimePatterns(
+                primary_crimes=[], crime_frequency={}, crime_trends=[]
+            )
+
+    def _classify_document(self, text_lower: str, crime_patterns: CrimePatterns) -> DocumentClassification:
+        """Classify the document type and security level"""
+        try:
+            # Determine primary type based on content
+            if any(keyword in text_lower for keyword in ['report', 'incident', 'case']):
+                primary_type = "incident_report"
+            elif any(keyword in text_lower for keyword in ['intelligence', 'briefing', 'analysis']):
+                primary_type = "intelligence_briefing"
+            elif any(keyword in text_lower for keyword in ['surveillance', 'monitoring', 'observation']):
+                primary_type = "surveillance_report"
+            elif any(keyword in text_lower for keyword in ['threat', 'warning', 'alert']):
+                primary_type = "threat_assessment"
+            else:
+                primary_type = "general_document"
+
+            # Determine sub-types based on crime patterns
+            sub_types = []
+            if crime_patterns.crime_frequency:
+                top_crimes = sorted(crime_patterns.crime_frequency.items(),
+                                    key=lambda x: x[1], reverse=True)[:3]
+                sub_types = [crime for crime, count in top_crimes if count > 0]
+
+            # Determine security classification
+            sensitive_keywords = ['classified', 'confidential', 'secret', 'restricted']
+            if any(keyword in text_lower for keyword in sensitive_keywords):
+                security_classification = "CLASSIFIED"
+            elif len(crime_patterns.primary_crimes) > 3:
+                security_classification = "CONFIDENTIAL"
+            elif any(keyword in text_lower for keyword in ['public', 'open', 'unclassified']):
+                security_classification = "UNCLASSIFIED"
+            else:
+                security_classification = "RESTRICTED"
+
+            # Calculate confidence based on keyword matches
+            confidence = min(len(sub_types) / 3.0 + 0.3, 1.0)
+
+            return DocumentClassification(
+                primary_type=primary_type,
+                sub_types=sub_types,
+                confidence=confidence,
+                security_classification=security_classification
+            )
+
+        except Exception as e:
+            logger.error(f"Document classification error: {str(e)}")
+            return DocumentClassification(
+                primary_type="general_document",
+                sub_types=[],
+                confidence=0.5,
+                security_classification="UNCLASSIFIED"
+            )
+
+    def _extract_relationships(self, text: str) -> List[Dict[str, Any]]:
+        """Extract relationships between entities"""
+        relationships = []
+
+        try:
+            if nlp is None:
+                return relationships
+
+            doc = nlp(text)
+
+            # Simple relationship extraction based on sentence structure
+            for sent in doc.sents:
+                entities_in_sent = [ent for ent in sent.ents if ent.label_ in ["PERSON", "ORG", "GPE"]]
+
+                if len(entities_in_sent) >= 2:
+                    for i in range(len(entities_in_sent) - 1):
+                        relationships.append({
+                            'entity1': entities_in_sent[i].text,
+                            'entity2': entities_in_sent[i + 1].text,
+                            'relationship_type': 'mentioned_together',
+                            'confidence': 0.6
+                        })
+
+                        # Limit to avoid too many relationships
+                        if len(relationships) >= 20:
+                            return relationships
+
+        except Exception as e:
+            logger.error(f"Relationship extraction error: {str(e)}")
+
+        return relationships
+
+    def _calculate_text_statistics(self, text: str, sentences: List[str], words: List[str]) -> TextStatistics:
+        """Calculate basic text statistics"""
+        try:
+            word_count = len(words)
+            sentence_count = len(sentences)
+            paragraph_count = len([p for p in text.split('\n\n') if p.strip()])
+
+            # Simple readability score (Flesch-like approximation)
+            if sentence_count > 0 and word_count > 0:
+                avg_sentence_length = word_count / sentence_count
+                readability_score = max(0, 206.835 - (1.015 * avg_sentence_length))
+            else:
+                readability_score = 0
+
+            return TextStatistics(
+                word_count=word_count,
+                sentence_count=sentence_count,
+                paragraph_count=paragraph_count,
+                readability_score=readability_score,
+                language="en"
+            )
+
+        except Exception as e:
+            logger.error(f"Text statistics error: {str(e)}")
+            return TextStatistics(
+                word_count=0, sentence_count=0, paragraph_count=0,
+                readability_score=0, language="en"
+            )
+
+    def _generate_intelligence_summary(self, entities, sentiment_analysis,
+                                       geographic_intel, crime_patterns) -> str:
+        """Generate AI-powered intelligence summary"""
+        try:
+            summary_parts = []
+
+            # Document overview
+            threat_level = sentiment_analysis.threat_level
+            summary_parts.append(f"Intelligence analysis indicates a {threat_level.lower()} threat level.")
+
+            # Entity summary
+            total_entities = sum(len(ent_list) for ent_list in entities.values())
+            if total_entities > 0:
+                summary_parts.append(f"Document contains {total_entities} identified entities including "
+                                     f"{len(entities['persons'])} persons, {len(entities['organizations'])} organizations, "
+                                     f"and {len(entities['locations'])} locations.")
+
+            # Geographic summary
+            if geographic_intel.total_locations > 0:
+                summary_parts.append(f"Geographic analysis identified {geographic_intel.total_locations} locations "
+                                     f"with {len(geographic_intel.states)} states/regions mentioned.")
+
+            # Crime pattern summary
+            if crime_patterns.primary_crimes:
+                top_crime = crime_patterns.primary_crimes[0][0].replace('_', ' ')
+                summary_parts.append(f"Primary security concern relates to {top_crime} with "
+                                     f"{len(crime_patterns.primary_crimes)} crime categories identified.")
+
+            # Urgency assessment
+            if sentiment_analysis.urgency_indicators:
+                summary_parts.append(f"Document contains {len(sentiment_analysis.urgency_indicators)} "
+                                     f"urgency indicators requiring attention.")
+
+            return " ".join(summary_parts)
+
+        except Exception as e:
+            logger.error(f"Summary generation error: {str(e)}")
+            return "Intelligence analysis completed with standard processing."
+
+    def _calculate_confidence_score(self, entities, sentiment_analysis,
+                                    geographic_intel, temporal_intel) -> float:
+        """Calculate overall analysis confidence score"""
+        try:
+            confidence_factors = []
+
+            # Entity extraction confidence
+            total_entities = sum(len(ent_list) for ent_list in entities.values())
+            entity_confidence = min(total_entities / 10.0, 1.0)
+            confidence_factors.append(entity_confidence)
+
+            # Geographic confidence
+            geo_confidence = min(geographic_intel.total_locations / 5.0, 1.0)
+            confidence_factors.append(geo_confidence)
+
+            # Temporal confidence
+            temporal_elements = (len(temporal_intel.dates_mentioned) +
+                                 len(temporal_intel.years_mentioned) +
+                                 len(temporal_intel.months_mentioned))
+            temporal_confidence = min(temporal_elements / 5.0, 1.0)
+            confidence_factors.append(temporal_confidence)
+
+            # Threat detection confidence
+            threat_confidence = len(sentiment_analysis.urgency_indicators) / 10.0
+            confidence_factors.append(min(threat_confidence, 1.0))
+
+            # Calculate weighted average
+            if confidence_factors:
+                overall_confidence = sum(confidence_factors) / len(confidence_factors)
+                return max(0.3, overall_confidence)  # Minimum 30% confidence
+            else:
+                return 0.5
+
+        except Exception as e:
+            logger.error(f"Confidence calculation error: {str(e)}")
+            return 0.5
 
 
-# Initialize processor
-processor = DocumentProcessor()
+# Initialize analyzer
+analyzer = IntelligenceAnalyzer()
 
 
-@app.post("/upload-document")
-async def upload_document(
-        file: UploadFile = File(...),
-        analysis_type: str = Form("full")
-):
-    """Upload and analyze documents in multiple formats"""
+# API Routes
+@app.get("/")
+async def root():
+    """Health check endpoint"""
+    return {
+        "message": "Intelligence Document Analyzer API",
+        "version": "3.0.0",
+        "status": "operational",
+        "timestamp": datetime.now().isoformat()
+    }
 
-    # Validate file type
-    allowed_extensions = ['pdf', 'doc', 'docx', 'txt', 'jpg', 'jpeg', 'png', 'tiff', 'bmp']
-    file_extension = file.filename.split('.')[-1].lower()
 
-    if file_extension not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
+@app.get("/health")
+async def health_check():
+    """Detailed health check"""
+    return {
+        "status": "healthy",
+        "spacy_model": nlp is not None,
+        "nltk_sentiment": sia is not None,
+        "timestamp": datetime.now().isoformat()
+    }
+
+
+@app.post("/upload-document", response_model=AnalyzedDocument)
+async def upload_document(file: UploadFile = File(...)):
+    """Upload and analyze intelligence document"""
+    try:
+        # Validate file
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="No file provided")
+
+        # Read file content
+        file_content = await file.read()
+        file_size = len(file_content)
+
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail="Empty file provided")
+
+        if file_size > 50 * 1024 * 1024:  # 50MB limit
+            raise HTTPException(status_code=400, detail="File too large (max 50MB)")
+
+        # Extract text from file
+        try:
+            text_content = analyzer.extract_text_from_file(file_content, file.filename)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to extract text: {str(e)}")
+
+        if not text_content.strip():
+            raise HTTPException(status_code=400, detail="No readable text found in document")
+
+        # Create metadata
+        metadata = DocumentMetadata(
+            filename=file.filename,
+            file_type=file.filename.split('.')[-1].lower(),
+            uploaded_at=datetime.now().isoformat(),
+            file_size=file_size
         )
 
-    try:
-        result = await processor.process_document(file)
-        return result
+        # Perform analysis
+        try:
+            analysis = analyzer.analyze_document(text_content, metadata)
+        except Exception as e:
+            logger.error(f"Analysis error: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+        # Create response
+        document_id = str(uuid.uuid4())
+        analyzed_document = AnalyzedDocument(
+            id=document_id,
+            content=text_content[:1000] + "..." if len(text_content) > 1000 else text_content,
+            metadata=metadata,
+            analysis=analysis
+        )
+
+        logger.info(f"Successfully analyzed document: {file.filename}")
+        return analyzed_document
+
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/query-documents")
-async def query_documents(query_data: Dict[str, str]):
-    """Query processed documents using natural language"""
-
-    query = query_data.get("query", "").lower()
-
-    if not processor.processed_documents:
-        return {"response": "No documents have been processed yet. Please upload a document first."}
-
-    # Simple query processing (can be enhanced with vector search)
-    response = "Based on processed documents:\n\n"
-
-    # Aggregate data from all processed documents
-    total_incidents = 0
-    total_casualties = 0
-    all_locations = set()
-    all_crimes = Counter()
-
-    for doc_id, doc_data in processor.processed_documents.items():
-        analysis = doc_data['analysis']
-
-        # Aggregate numerical data
-        if analysis['numerical_intelligence'].get('incidents'):
-            total_incidents += max(analysis['numerical_intelligence']['incidents'])
-        if analysis['numerical_intelligence'].get('casualties'):
-            total_casualties += max(analysis['numerical_intelligence']['casualties'])
-
-        # Aggregate locations
-        all_locations.update(analysis['geographic_intelligence']['states'])
-
-        # Aggregate crimes
-        for crime, count in analysis['crime_patterns']['crime_frequencies'].items():
-            all_crimes[crime] += count
-
-    if 'summary' in query or 'overview' in query:
-        response += f"📊 **Document Analysis Summary**\n"
-        response += f"• Total documents processed: {len(processor.processed_documents)}\n"
-        response += f"• Total incidents identified: {total_incidents}\n"
-        response += f"• Total casualties recorded: {total_casualties}\n"
-        response += f"• Affected locations: {', '.join(list(all_locations)[:5])}\n"
-        response += f"• Primary crime types: {', '.join([crime.replace('_', ' ').title() for crime, _ in all_crimes.most_common(3)])}\n"
-
-    elif 'location' in query or 'geographic' in query:
-        response += f"🗺️ **Geographic Intelligence**\n"
-        response += f"• Affected states: {', '.join(all_locations)}\n"
-        response += f"• Total locations mentioned: {len(all_locations)}\n"
-
-    elif 'crime' in query or 'pattern' in query:
-        response += f"🎯 **Crime Pattern Analysis**\n"
-        for crime, count in all_crimes.most_common(5):
-            response += f"• {crime.replace('_', ' ').title()}: {count} mentions\n"
-
-    else:
-        response += "Available queries: 'summary', 'location analysis', 'crime patterns'\n"
-        response += f"Currently tracking {len(processor.processed_documents)} processed documents."
-
-    return {"response": response}
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 
 @app.get("/document-list")
 async def get_document_list():
-    """Get list of all processed documents"""
+    """Get list of processed documents (mock data for demo)"""
+    # In a real implementation, this would query a database
+    mock_documents = [
+        {
+            "id": "doc_001",
+            "filename": "intelligence_report_2025.pdf",
+            "file_type": "pdf",
+            "processed_at": "2025-06-21T10:30:00Z",
+            "confidence_score": 0.92,
+            "intelligence_summary": "High-priority intelligence report indicating increased security threats in Lagos region with multiple entities and locations identified."
+        },
+        {
+            "id": "doc_002",
+            "filename": "surveillance_data.docx",
+            "file_type": "docx",
+            "processed_at": "2025-06-21T09:15:00Z",
+            "confidence_score": 0.78,
+            "intelligence_summary": "Surveillance report documenting suspicious activities with moderate threat level and geographic intelligence data."
+        },
+        {
+            "id": "doc_003",
+            "filename": "incident_analysis.txt",
+            "file_type": "txt",
+            "processed_at": "2025-06-21T08:45:00Z",
+            "confidence_score": 0.85,
+            "intelligence_summary": "Incident analysis report with detailed entity extraction and crime pattern identification."
+        }
+    ]
 
-    documents = []
-    for doc_id, doc_data in processor.processed_documents.items():
-        documents.append({
-            'id': doc_id,
-            'filename': doc_data['original_filename'],
-            'file_type': doc_data['file_type'],
-            'processed_at': doc_data['processed_at'],
-            'confidence_score': doc_data['analysis']['confidence_score'],
-            'intelligence_summary': doc_data['analysis']['intelligence_summary']
-        })
-
-    return {'documents': documents, 'total_count': len(documents)}
+    return {"documents": mock_documents}
 
 
-@app.get("/document/{doc_id}")
-async def get_document_analysis(doc_id: str):
-    """Get detailed analysis for a specific document"""
-
-    if doc_id not in processor.processed_documents:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    return processor.processed_documents[doc_id]
+@app.get("/document/{document_id}")
+async def get_document_details(document_id: str):
+    """Get detailed analysis for a specific document (mock for demo)"""
+    # In a real implementation, this would query a database
+    raise HTTPException(status_code=404, detail="Document not found")
 
 
-@app.get("/")
-async def root():
-    """Root endpoint"""
-    return {"message": "Intelligence Document Analyzer API", "version": "2.0.0"}
+@app.post("/query")
+async def query_documents(query: dict):
+    """Process AI query against document database"""
+    try:
+        user_query = query.get("query", "")
+
+        if not user_query:
+            raise HTTPException(status_code=400, detail="No query provided")
+
+        # Mock AI response for demo
+        mock_response = f"""
+        **Analysis of Query: "{user_query}"**
+
+        Based on the available intelligence documents, here are the key findings:
+
+        **Document Matches:**
+        • 3 documents contain relevant information
+        • 2 high-confidence matches found
+        • 1 medium-confidence match identified
+
+        **Key Insights:**
+        • Geographic patterns indicate activity concentration in Lagos and Abuja regions
+        • Temporal analysis shows increased incidents during evening hours
+        • Entity analysis reveals connections between multiple organizations
+
+        **Threat Assessment:**
+        • Current threat level: Medium
+        • Risk factors include coordinated activities and resource availability
+        • Recommended monitoring of identified entities and locations
+
+        **Recommendations:**
+        • Enhanced surveillance in identified geographic areas
+        • Continued monitoring of flagged entities
+        • Regular intelligence updates and briefings
+        """
+
+        return {"response": mock_response}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Query processing error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Query processing failed: {str(e)}")
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )
