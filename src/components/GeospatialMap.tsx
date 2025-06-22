@@ -1,4 +1,4 @@
-// src/components/GeospatialMap.tsx - Interactive Geospatial Intelligence Map
+// src/components/GeospatialMap.tsx - Complete Fixed Interactive Geospatial Intelligence Map
 
 import React, { useEffect, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
@@ -14,7 +14,7 @@ interface GeospatialPoint {
   title: string;
   description: string;
   threat_level: 'low' | 'medium' | 'high';
-  type: 'incident' | 'surveillance' | 'intelligence' | 'facility' | 'location';
+  type: 'incident' | 'surveillance' | 'intelligence' | 'facility' | 'location' | 'state' | 'city';
   timestamp: string;
   metadata?: Record<string, any>;
 }
@@ -72,7 +72,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
   const [points, setPoints] = useState<GeospatialPoint[]>([]);
   const [filters, setFilters] = useState<MapFilter>({
     threat_levels: ['low', 'medium', 'high'],
-    point_types: ['incident', 'surveillance', 'intelligence', 'facility', 'location'],
+    point_types: ['incident', 'surveillance', 'intelligence', 'facility', 'location', 'state', 'city'],
     date_range: {
       start: '',
       end: ''
@@ -96,7 +96,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
     map.current.on('load', () => {
       setIsLoaded(true);
-      setupMapLayers();
+      console.log('Map loaded successfully');
     });
 
     // Add navigation controls
@@ -126,7 +126,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
   const loadAnalysisData = () => {
     if (!analysisData) return;
 
-    console.log('=== DEBUGGING GEOSPATIAL DATA ===');
+    console.log('=== LOADING ANALYSIS DATA ===');
     console.log('Analysis Data:', analysisData);
     console.log('Geographic Intelligence:', analysisData.analysis.geographic_intelligence);
 
@@ -138,7 +138,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
     console.log('States from analysis:', geoIntel.states);
     console.log('Other locations from analysis:', geoIntel.other_locations);
 
-    // Add coordinates from analysis
+    // Add coordinates from analysis (these should already be correct from backend)
     geoIntel.coordinates.forEach((coord, index) => {
       console.log(`Processing coordinate ${index}:`, coord);
       analysisPoints.push({
@@ -158,9 +158,50 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       });
     });
 
-    // Create points for major Nigerian cities mentioned in states
-    const nigerianCities = {
-      // State capitals and major cities
+    // FIXED: Nigerian States to Capital mapping (EXACT MATCHES ONLY)
+    const nigerianStateCapitals: Record<string, { lat: number; lng: number; name: string }> = {
+      'abia': { lat: 5.5265, lng: 7.4906, name: 'Umuahia' },
+      'adamawa': { lat: 9.2000, lng: 12.4833, name: 'Yola' },
+      'akwa ibom': { lat: 5.0515, lng: 7.9307, name: 'Uyo' },
+      'anambra': { lat: 6.2120, lng: 7.0740, name: 'Awka' },
+      'bauchi': { lat: 10.3158, lng: 9.8442, name: 'Bauchi' },
+      'bayelsa': { lat: 4.9267, lng: 6.2676, name: 'Yenagoa' },
+      'benue': { lat: 7.7340, lng: 8.5120, name: 'Makurdi' },
+      'borno': { lat: 11.8311, lng: 13.1510, name: 'Maiduguri' },
+      'cross river': { lat: 4.9516, lng: 8.3220, name: 'Calabar' },
+      'delta': { lat: 6.1677, lng: 6.7337, name: 'Asaba' },
+      'ebonyi': { lat: 6.3248, lng: 8.1142, name: 'Abakaliki' },
+      'edo': { lat: 6.3350, lng: 5.6037, name: 'Benin City' },
+      'ekiti': { lat: 7.6667, lng: 5.2167, name: 'Ado-Ekiti' },
+      'enugu': { lat: 6.5244, lng: 7.5112, name: 'Enugu' },
+      'gombe': { lat: 10.2840, lng: 11.1610, name: 'Gombe' },
+      'imo': { lat: 5.4840, lng: 7.0351, name: 'Owerri' },
+      'jigawa': { lat: 11.7564, lng: 9.3388, name: 'Dutse' },
+      'kaduna': { lat: 10.5105, lng: 7.4165, name: 'Kaduna' },
+      'kano': { lat: 12.0022, lng: 8.5920, name: 'Kano' },
+      'katsina': { lat: 12.9908, lng: 7.6018, name: 'Katsina' },
+      'kebbi': { lat: 12.4537, lng: 4.1994, name: 'Birnin Kebbi' },
+      'kogi': { lat: 7.7974, lng: 6.7337, name: 'Lokoja' },
+      'kwara': { lat: 8.5000, lng: 4.5500, name: 'Ilorin' },
+      'lagos': { lat: 6.5962, lng: 3.3431, name: 'Ikeja' },
+      'nasarawa': { lat: 8.4833, lng: 8.5167, name: 'Lafia' },
+      'niger': { lat: 9.6134, lng: 6.5560, name: 'Minna' },
+      'ogun': { lat: 7.1475, lng: 3.3619, name: 'Abeokuta' },
+      'ondo': { lat: 7.2571, lng: 5.2058, name: 'Akure' },
+      'osun': { lat: 7.7719, lng: 4.5567, name: 'Oshogbo' },
+      'oyo': { lat: 7.3775, lng: 3.9470, name: 'Ibadan' },
+      'plateau': { lat: 9.8965, lng: 8.8583, name: 'Jos' },
+      'rivers': { lat: 4.8156, lng: 7.0498, name: 'Port Harcourt' },
+      'sokoto': { lat: 13.0609, lng: 5.2476, name: 'Sokoto' },
+      'taraba': { lat: 8.8833, lng: 11.3667, name: 'Jalingo' },
+      'yobe': { lat: 11.7469, lng: 11.9609, name: 'Damaturu' },
+      'zamfara': { lat: 12.1667, lng: 6.6611, name: 'Gusau' },
+      'abuja': { lat: 9.0765, lng: 7.3986, name: 'Abuja' },
+      'fct': { lat: 9.0765, lng: 7.3986, name: 'Abuja' }
+    };
+
+    // FIXED: Major Nigerian cities (EXACT MATCHES ONLY)
+    const nigerianCitiesExact: Record<string, { lat: number; lng: number }> = {
       'lagos': { lat: 6.5244, lng: 3.3792 },
       'abuja': { lat: 9.0765, lng: 7.3986 },
       'kano': { lat: 12.0022, lng: 8.5920 },
@@ -190,25 +231,23 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       'uyo': { lat: 5.0515, lng: 7.9307 },
       'yenagoa': { lat: 4.9267, lng: 6.2676 },
       'yola': { lat: 9.2000, lng: 12.4833 },
-
-      // Major commercial cities and LGAs
+      'jalingo': { lat: 8.8833, lng: 11.3667 },
+      'gusau': { lat: 12.1667, lng: 6.6611 },
+      'damaturu': { lat: 11.7469, lng: 11.9609 },
+      'dutse': { lat: 11.7564, lng: 9.3388 },
+      'abakaliki': { lat: 6.3248, lng: 8.1142 },
+      'asaba': { lat: 6.1677, lng: 6.7337 },
+      'birnin kebbi': { lat: 12.4537, lng: 4.1994 },
+      'ado-ekiti': { lat: 7.6667, lng: 5.2167 },
+      // Additional major cities
       'warri': { lat: 5.5167, lng: 5.7500 },
       'aba': { lat: 5.1068, lng: 7.3668 },
       'onitsha': { lat: 6.1667, lng: 6.7833 },
       'zaria': { lat: 11.0804, lng: 7.7170 },
-      'surulere': { lat: 6.5027, lng: 3.3584 },
-      'ikeja': { lat: 6.5962, lng: 3.3431 },
-      'agege': { lat: 6.6186, lng: 3.3403 },
-      'alimosho': { lat: 6.5833, lng: 3.2667 },
-      'ikorodu': { lat: 6.6019, lng: 3.5106 },
-      'victoria island': { lat: 6.4281, lng: 3.4219 },
-      'apapa': { lat: 6.4474, lng: 3.3903 },
-      'bonny': { lat: 4.4500, lng: 7.1667 },
-      'yaba': { lat: 6.5095, lng: 3.3711 },
-      'mushin': { lat: 6.5240, lng: 3.3548 }
+      'ikeja': { lat: 6.5962, lng: 3.3431 }
     };
 
-    // Add points for mentioned states and cities with improved matching
+    // Process all detected locations with IMPROVED matching
     const allLocations = [
       ...geoIntel.states,
       ...geoIntel.cities,
@@ -218,62 +257,80 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
     console.log('All locations to process:', allLocations);
 
     allLocations.forEach((location, index) => {
+      const originalLocation = location;
       const locationKey = location.toLowerCase().trim();
 
-      // Direct match first
-      let cityData = nigerianCities[locationKey as keyof typeof nigerianCities];
+      // Remove common suffixes to normalize
+      const cleanedLocation = locationKey
+        .replace(/\s+state$/i, '')
+        .replace(/\s+lga$/i, '')
+        .replace(/\s+local government$/i, '')
+        .replace(/\s+area$/i, '')
+        .replace(/\s+city$/i, '')
+        .trim();
 
-      // If no direct match, try partial matching
-      if (!cityData) {
-        // Try removing common suffixes
-        const cleanedLocation = locationKey
-          .replace(/\s+state$/i, '')
-          .replace(/\s+lga$/i, '')
-          .replace(/\s+local government$/i, '')
-          .replace(/\s+area$/i, '')
-          .replace(/\s+city$/i, '')
-          .trim();
+      console.log(`Processing location "${location}" -> cleaned: "${cleanedLocation}"`);
 
-        cityData = nigerianCities[cleanedLocation as keyof typeof nigerianCities];
+      let coordinateData: { lat: number; lng: number } | null = null;
+      let locationType: 'state' | 'city' | 'location' = 'location';
+      let displayName = location;
 
-        // If still no match, try finding partial matches in our database
-        if (!cityData) {
-          const partialMatch = Object.keys(nigerianCities).find(key =>
-            key.includes(cleanedLocation) || cleanedLocation.includes(key)
-          );
-          if (partialMatch) {
-            cityData = nigerianCities[partialMatch as keyof typeof nigerianCities];
-          }
-        }
+      // 1. FIRST: Check if it's a Nigerian state (exact match only)
+      if (cleanedLocation in nigerianStateCapitals) {
+        const stateData = nigerianStateCapitals[cleanedLocation];
+        coordinateData = { lat: stateData.lat, lng: stateData.lng };
+        locationType = 'state';
+        displayName = `${location} (State - Capital: ${stateData.name})`;
+        console.log(`✓ Found state: ${location} -> ${stateData.name} (${stateData.lat}, ${stateData.lng})`);
+      }
+      // 2. SECOND: Check if it's a Nigerian city (exact match only)
+      else if (cleanedLocation in nigerianCitiesExact) {
+        coordinateData = nigerianCitiesExact[cleanedLocation];
+        locationType = 'city';
+        displayName = `${location} (City)`;
+        console.log(`✓ Found city: ${location} -> (${coordinateData.lat}, ${coordinateData.lng})`);
+      }
+      // 3. THIRD: Check original location key without cleaning
+      else if (locationKey in nigerianStateCapitals) {
+        const stateData = nigerianStateCapitals[locationKey];
+        coordinateData = { lat: stateData.lat, lng: stateData.lng };
+        locationType = 'state';
+        displayName = `${location} (State - Capital: ${stateData.name})`;
+        console.log(`✓ Found state (original): ${location} -> ${stateData.name} (${stateData.lat}, ${stateData.lng})`);
+      }
+      else if (locationKey in nigerianCitiesExact) {
+        coordinateData = nigerianCitiesExact[locationKey];
+        locationType = 'city';
+        displayName = `${location} (City)`;
+        console.log(`✓ Found city (original): ${location} -> (${coordinateData.lat}, ${coordinateData.lng})`);
+      }
+      else {
+        console.log(`✗ No coordinates found for location: ${location} (cleaned: ${cleanedLocation})`);
       }
 
-      console.log(`Checking location "${location}" (key: "${locationKey}"):`, cityData);
-
-      if (cityData) {
+      // Only add if we found valid coordinates
+      if (coordinateData) {
         analysisPoints.push({
           id: `location_${index}`,
-          latitude: cityData.lat,
-          longitude: cityData.lng,
-          title: `${location} (Mentioned)`,
-          description: `Location "${location}" mentioned in document: ${analysisData.metadata.filename}`,
+          latitude: coordinateData.lat,
+          longitude: coordinateData.lng,
+          title: displayName,
+          description: `Location "${originalLocation}" mentioned in document: ${analysisData.metadata.filename}`,
           threat_level: threatLevel,
-          type: 'intelligence',
+          type: locationType,
           timestamp: analysisData.metadata.uploaded_at,
           metadata: {
             source: 'location_mention',
-            original_text: location,
+            original_text: originalLocation,
             filename: analysisData.metadata.filename
           }
         });
-      } else {
-        console.log(`No coordinates found for location: ${location}`);
       }
     });
 
-    // If no specific coordinates but locations mentioned, focus on Nigeria
+    // If no specific coordinates but locations mentioned, add general Nigeria reference
     if (analysisPoints.length === 0 && allLocations.length > 0) {
       console.log('No specific points found, adding general Nigeria reference');
-      // Add a general Nigeria point
       analysisPoints.push({
         id: 'nigeria_general',
         latitude: 9.0820,
@@ -354,13 +411,6 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
     setPoints(mockPoints);
   };
 
-  const setupMapLayers = () => {
-    if (!map.current || !isLoaded) return;
-    console.log('Setting up initial map layers');
-
-    // Don't setup layers here, let the useEffect handle it when points are available
-    // This prevents the timing issue where layers are created before data is ready
-  };
   useEffect(() => {
     if (!map.current || !isLoaded || points.length === 0) return;
 
@@ -594,41 +644,6 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
           </button>
 
           <button
-            onClick={() => {
-              console.log('Adding test points...');
-              const testPoints: GeospatialPoint[] = [
-                {
-                  id: 'test_1',
-                  latitude: 6.5244,
-                  longitude: 3.3792,
-                  title: 'Test Lagos Point',
-                  description: 'Test point to verify map rendering',
-                  threat_level: 'high',
-                  type: 'incident',
-                  timestamp: new Date().toISOString()
-                },
-                {
-                  id: 'test_2',
-                  latitude: 9.0765,
-                  longitude: 7.3986,
-                  title: 'Test Abuja Point',
-                  description: 'Test point to verify map rendering',
-                  threat_level: 'medium',
-                  type: 'facility',
-                  timestamp: new Date().toISOString()
-                }
-              ];
-              console.log('Setting test points:', testPoints);
-              setPoints(testPoints);
-            }}
-            className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
-            title="Add test points"
-          >
-            <MapPin className="h-4 w-4" />
-            <span>Test</span>
-          </button>
-
-          <button
             onClick={exportMapData}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
@@ -637,46 +652,6 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
           </button>
         </div>
       </div>
-
-      {/* Debug Panel */}
-      {analysisData && (
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-          <h3 className="font-semibold text-gray-900 mb-2">Debug Information</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-            <div>
-              <span className="text-gray-700 font-medium">Extracted Coordinates:</span>
-              <span className="ml-2 text-gray-900">{analysisData.analysis.geographic_intelligence.coordinates.length}</span>
-              {analysisData.analysis.geographic_intelligence.coordinates.length > 0 && (
-                <ul className="mt-1 text-xs text-gray-600">
-                  {analysisData.analysis.geographic_intelligence.coordinates.map((coord, i) => (
-                    <li key={i}>{coord.latitude.toFixed(4)}, {coord.longitude.toFixed(4)}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div>
-              <span className="text-gray-700 font-medium">States Found:</span>
-              <span className="ml-2 text-gray-900">{analysisData.analysis.geographic_intelligence.states.length}</span>
-              {analysisData.analysis.geographic_intelligence.states.length > 0 && (
-                <div className="mt-1 text-xs text-gray-600">
-                  {analysisData.analysis.geographic_intelligence.states.join(', ')}
-                </div>
-              )}
-            </div>
-            <div>
-              <span className="text-gray-700 font-medium">Map Points:</span>
-              <span className="ml-2 text-gray-900">{points.length}</span>
-              {points.length > 0 && (
-                <ul className="mt-1 text-xs text-gray-600">
-                  {points.map((point, i) => (
-                    <li key={i}>{point.title} ({point.type})</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Analysis Data Summary */}
       {analysisData && (
@@ -772,7 +747,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
             <div>
               <h4 className="font-medium text-gray-900 mb-2">Point Types</h4>
               <div className="space-y-2">
-                {['incident', 'surveillance', 'intelligence', 'facility', 'location'].map((type) => (
+                {['incident', 'surveillance', 'intelligence', 'facility', 'location', 'state', 'city'].map((type) => (
                   <label key={type} className="flex items-center">
                     <input
                       type="checkbox"
@@ -817,7 +792,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       )}
 
       {/* Map Container */}
-      <div className="bg-white rounded-lg shadow border overflow-hidden">
+      <div className="bg-white rounded-lg shadow border overflow-hidden relative">
         <div
           ref={mapContainer}
           className="h-96 w-full"
