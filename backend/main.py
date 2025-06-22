@@ -1205,7 +1205,7 @@ async def get_document_list():
 
 @app.get("/document/{document_id}")
 async def get_document_details(document_id: str):
-    """Get detailed analysis for a specific document"""
+    """Gettt detailed analysis for a specific document"""
     raise HTTPException(status_code=404, detail="Document not found")
 
 
