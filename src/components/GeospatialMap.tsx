@@ -114,9 +114,11 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
   useEffect(() => {
     // Load data from analysis when it changes
+    console.log('Analysis data changed:', analysisData);
     if (analysisData) {
       loadAnalysisData();
     } else {
+      console.log('No analysis data, loading mock data');
       loadMockData();
     }
   }, [analysisData]);
@@ -124,12 +126,21 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
   const loadAnalysisData = () => {
     if (!analysisData) return;
 
+    console.log('=== DEBUGGING GEOSPATIAL DATA ===');
+    console.log('Analysis Data:', analysisData);
+    console.log('Geographic Intelligence:', analysisData.analysis.geographic_intelligence);
+
     const analysisPoints: GeospatialPoint[] = [];
     const geoIntel = analysisData.analysis.geographic_intelligence;
     const threatLevel = analysisData.analysis.sentiment_analysis.threat_level.toLowerCase() as 'low' | 'medium' | 'high';
 
+    console.log('Coordinates from analysis:', geoIntel.coordinates);
+    console.log('States from analysis:', geoIntel.states);
+    console.log('Other locations from analysis:', geoIntel.other_locations);
+
     // Add coordinates from analysis
     geoIntel.coordinates.forEach((coord, index) => {
+      console.log(`Processing coordinate ${index}:`, coord);
       analysisPoints.push({
         id: `coord_${index}`,
         latitude: coord.latitude,
@@ -149,6 +160,7 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
     // Create points for major Nigerian cities mentioned in states
     const nigerianCities = {
+      // State capitals and major cities
       'lagos': { lat: 6.5244, lng: 3.3792 },
       'abuja': { lat: 9.0765, lng: 7.3986 },
       'kano': { lat: 12.0022, lng: 8.5920 },
@@ -158,19 +170,84 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       'benin city': { lat: 6.3350, lng: 5.6037 },
       'maiduguri': { lat: 11.8311, lng: 13.1510 },
       'jos': { lat: 9.8965, lng: 8.8583 },
-      'ilorin': { lat: 8.5000, lng: 4.5500 }
+      'ilorin': { lat: 8.5000, lng: 4.5500 },
+      'abeokuta': { lat: 7.1475, lng: 3.3619 },
+      'akure': { lat: 7.2571, lng: 5.2058 },
+      'awka': { lat: 6.2120, lng: 7.0740 },
+      'bauchi': { lat: 10.3158, lng: 9.8442 },
+      'calabar': { lat: 4.9516, lng: 8.3220 },
+      'enugu': { lat: 6.5244, lng: 7.5112 },
+      'gombe': { lat: 10.2840, lng: 11.1610 },
+      'katsina': { lat: 12.9908, lng: 7.6018 },
+      'lafia': { lat: 8.4833, lng: 8.5167 },
+      'lokoja': { lat: 7.7974, lng: 6.7337 },
+      'makurdi': { lat: 7.7340, lng: 8.5120 },
+      'minna': { lat: 9.6134, lng: 6.5560 },
+      'oshogbo': { lat: 7.7719, lng: 4.5567 },
+      'owerri': { lat: 5.4840, lng: 7.0351 },
+      'sokoto': { lat: 13.0609, lng: 5.2476 },
+      'umuahia': { lat: 5.5265, lng: 7.4906 },
+      'uyo': { lat: 5.0515, lng: 7.9307 },
+      'yenagoa': { lat: 4.9267, lng: 6.2676 },
+      'yola': { lat: 9.2000, lng: 12.4833 },
+
+      // Major commercial cities and LGAs
+      'warri': { lat: 5.5167, lng: 5.7500 },
+      'aba': { lat: 5.1068, lng: 7.3668 },
+      'onitsha': { lat: 6.1667, lng: 6.7833 },
+      'zaria': { lat: 11.0804, lng: 7.7170 },
+      'surulere': { lat: 6.5027, lng: 3.3584 },
+      'ikeja': { lat: 6.5962, lng: 3.3431 },
+      'agege': { lat: 6.6186, lng: 3.3403 },
+      'alimosho': { lat: 6.5833, lng: 3.2667 },
+      'ikorodu': { lat: 6.6019, lng: 3.5106 },
+      'victoria island': { lat: 6.4281, lng: 3.4219 },
+      'apapa': { lat: 6.4474, lng: 3.3903 },
+      'bonny': { lat: 4.4500, lng: 7.1667 },
+      'yaba': { lat: 6.5095, lng: 3.3711 },
+      'mushin': { lat: 6.5240, lng: 3.3548 }
     };
 
-    // Add points for mentioned states and cities
+    // Add points for mentioned states and cities with improved matching
     const allLocations = [
       ...geoIntel.states,
       ...geoIntel.cities,
       ...geoIntel.other_locations
     ];
 
+    console.log('All locations to process:', allLocations);
+
     allLocations.forEach((location, index) => {
       const locationKey = location.toLowerCase().trim();
-      const cityData = nigerianCities[locationKey as keyof typeof nigerianCities];
+
+      // Direct match first
+      let cityData = nigerianCities[locationKey as keyof typeof nigerianCities];
+
+      // If no direct match, try partial matching
+      if (!cityData) {
+        // Try removing common suffixes
+        const cleanedLocation = locationKey
+          .replace(/\s+state$/i, '')
+          .replace(/\s+lga$/i, '')
+          .replace(/\s+local government$/i, '')
+          .replace(/\s+area$/i, '')
+          .replace(/\s+city$/i, '')
+          .trim();
+
+        cityData = nigerianCities[cleanedLocation as keyof typeof nigerianCities];
+
+        // If still no match, try finding partial matches in our database
+        if (!cityData) {
+          const partialMatch = Object.keys(nigerianCities).find(key =>
+            key.includes(cleanedLocation) || cleanedLocation.includes(key)
+          );
+          if (partialMatch) {
+            cityData = nigerianCities[partialMatch as keyof typeof nigerianCities];
+          }
+        }
+      }
+
+      console.log(`Checking location "${location}" (key: "${locationKey}"):`, cityData);
 
       if (cityData) {
         analysisPoints.push({
@@ -188,11 +265,14 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
             filename: analysisData.metadata.filename
           }
         });
+      } else {
+        console.log(`No coordinates found for location: ${location}`);
       }
     });
 
     // If no specific coordinates but locations mentioned, focus on Nigeria
     if (analysisPoints.length === 0 && allLocations.length > 0) {
+      console.log('No specific points found, adding general Nigeria reference');
       // Add a general Nigeria point
       analysisPoints.push({
         id: 'nigeria_general',
@@ -211,10 +291,12 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       });
     }
 
+    console.log('Final analysis points:', analysisPoints);
     setPoints(analysisPoints);
 
     // Adjust map view to show all points
     if (analysisPoints.length > 0 && map.current) {
+      console.log('Adjusting map bounds for', analysisPoints.length, 'points');
       const bounds = new mapboxgl.LngLatBounds();
       analysisPoints.forEach(point => {
         bounds.extend([point.longitude, point.latitude]);
@@ -222,9 +304,12 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
       setTimeout(() => {
         if (map.current) {
+          console.log('Fitting map to bounds:', bounds);
           map.current.fitBounds(bounds, { padding: 50, maxZoom: 12 });
         }
       }, 1000);
+    } else {
+      console.log('No points to display on map');
     }
   };
 
@@ -271,88 +356,17 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
   const setupMapLayers = () => {
     if (!map.current || !isLoaded) return;
+    console.log('Setting up initial map layers');
 
-    // Add data source
-    map.current.addSource('intelligence-points', {
-      type: 'geojson',
-      data: {
-        type: 'FeatureCollection',
-        features: []
-      }
-    });
-
-    // Add circle layer for points
-    map.current.addLayer({
-      id: 'intelligence-circles',
-      type: 'circle',
-      source: 'intelligence-points',
-      paint: {
-        'circle-radius': [
-          'case',
-          ['==', ['get', 'threat_level'], 'high'], 12,
-          ['==', ['get', 'threat_level'], 'medium'], 8,
-          6
-        ],
-        'circle-color': [
-          'case',
-          ['==', ['get', 'threat_level'], 'high'], '#ef4444',
-          ['==', ['get', 'threat_level'], 'medium'], '#f59e0b',
-          '#10b981'
-        ],
-        'circle-opacity': 0.8,
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff'
-      }
-    });
-
-    // Add click event
-    map.current.on('click', 'intelligence-circles', (e) => {
-      if (e.features && e.features[0]) {
-        const feature = e.features[0];
-        const point = points.find(p => p.id === feature.properties?.id);
-        if (point) {
-          setSelectedPoint(point);
-
-          // Create popup
-          new mapboxgl.Popup()
-            .setLngLat([point.longitude, point.latitude])
-            .setHTML(`
-              <div class="p-3 max-w-sm">
-                <h3 class="font-semibold text-gray-900 mb-2">${point.title}</h3>
-                <p class="text-sm text-gray-600 mb-2">${point.description}</p>
-                <div class="flex items-center justify-between">
-                  <span class="px-2 py-1 rounded text-xs font-medium ${
-                    point.threat_level === 'high' ? 'bg-red-100 text-red-800' :
-                    point.threat_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
-                    'bg-green-100 text-green-800'
-                  }">
-                    ${point.threat_level.toUpperCase()}
-                  </span>
-                  <span class="text-xs text-gray-500">${point.type}</span>
-                </div>
-                ${point.metadata?.filename ? `<p class="text-xs text-gray-400 mt-1">Source: ${point.metadata.filename}</p>` : ''}
-              </div>
-            `)
-            .addTo(map.current!);
-        }
-      }
-    });
-
-    // Change cursor on hover
-    map.current.on('mouseenter', 'intelligence-circles', () => {
-      if (map.current) {
-        map.current.getCanvas().style.cursor = 'pointer';
-      }
-    });
-
-    map.current.on('mouseleave', 'intelligence-circles', () => {
-      if (map.current) {
-        map.current.getCanvas().style.cursor = '';
-      }
-    });
+    // Don't setup layers here, let the useEffect handle it when points are available
+    // This prevents the timing issue where layers are created before data is ready
   };
   useEffect(() => {
-    if (!map.current || !isLoaded) return;
+    if (!map.current || !isLoaded || points.length === 0) return;
+
+    console.log('=== UPDATING MAP WITH POINTS ===');
+    console.log('Points to display:', points);
+    console.log('Map loaded:', isLoaded);
 
     const filteredPoints = points.filter(point => {
       const matchesThreatLevel = filters.threat_levels.includes(point.threat_level);
@@ -368,6 +382,8 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
 
       return matchesThreatLevel && matchesType && matchesDateRange;
     });
+
+    console.log('Filtered points:', filteredPoints);
 
     const geojsonData = {
       type: 'FeatureCollection' as const,
@@ -388,9 +404,118 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
       }))
     };
 
-    const source = map.current.getSource('intelligence-points') as mapboxgl.GeoJSONSource;
-    if (source) {
-      source.setData(geojsonData);
+    console.log('GeoJSON data:', geojsonData);
+
+    try {
+      const source = map.current.getSource('intelligence-points') as mapboxgl.GeoJSONSource;
+      if (source) {
+        console.log('Updating existing source with data');
+        source.setData(geojsonData);
+      } else {
+        console.log('Source not found, creating new source and layers');
+        // Add source if it doesn't exist
+        map.current.addSource('intelligence-points', {
+          type: 'geojson',
+          data: geojsonData
+        });
+
+        // Add circle layer
+        map.current.addLayer({
+          id: 'intelligence-circles',
+          type: 'circle',
+          source: 'intelligence-points',
+          paint: {
+            'circle-radius': [
+              'case',
+              ['==', ['get', 'threat_level'], 'high'], 15,
+              ['==', ['get', 'threat_level'], 'medium'], 10,
+              8
+            ],
+            'circle-color': [
+              'case',
+              ['==', ['get', 'threat_level'], 'high'], '#ef4444',
+              ['==', ['get', 'threat_level'], 'medium'], '#f59e0b',
+              '#10b981'
+            ],
+            'circle-opacity': 0.9,
+            'circle-stroke-width': 3,
+            'circle-stroke-color': '#ffffff'
+          }
+        });
+
+        // Add labels layer
+        map.current.addLayer({
+          id: 'intelligence-labels',
+          type: 'symbol',
+          source: 'intelligence-points',
+          layout: {
+            'text-field': ['get', 'title'],
+            'text-font': ['Open Sans Semibold', 'Arial Unicode MS Bold'],
+            'text-offset': [0, 1.5],
+            'text-anchor': 'top',
+            'text-size': 12
+          },
+          paint: {
+            'text-color': '#000000',
+            'text-halo-color': '#ffffff',
+            'text-halo-width': 2
+          }
+        });
+
+        // Add click event
+        map.current.on('click', 'intelligence-circles', (e) => {
+          if (e.features && e.features[0]) {
+            const feature = e.features[0];
+            const point = points.find(p => p.id === feature.properties?.id);
+            if (point) {
+              setSelectedPoint(point);
+
+              // Create popup
+              new mapboxgl.Popup()
+                .setLngLat([point.longitude, point.latitude])
+                .setHTML(`
+                  <div class="p-3 max-w-sm">
+                    <h3 class="font-semibold text-gray-900 mb-2">${point.title}</h3>
+                    <p class="text-sm text-gray-600 mb-2">${point.description}</p>
+                    <div class="flex items-center justify-between">
+                      <span class="px-2 py-1 rounded text-xs font-medium ${
+                        point.threat_level === 'high' ? 'bg-red-100 text-red-800' :
+                        point.threat_level === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                        'bg-green-100 text-green-800'
+                      }">
+                        ${point.threat_level.toUpperCase()}
+                      </span>
+                      <span class="text-xs text-gray-500">${point.type}</span>
+                    </div>
+                    ${point.metadata?.filename ? `<p class="text-xs text-gray-400 mt-1">Source: ${point.metadata.filename}</p>` : ''}
+                  </div>
+                `)
+                .addTo(map.current!);
+            }
+          }
+        });
+
+        // Change cursor on hover
+        map.current.on('mouseenter', 'intelligence-circles', () => {
+          if (map.current) {
+            map.current.getCanvas().style.cursor = 'pointer';
+          }
+        });
+
+        map.current.on('mouseleave', 'intelligence-circles', () => {
+          if (map.current) {
+            map.current.getCanvas().style.cursor = '';
+          }
+        });
+      }
+
+      // Force map to repaint
+      if (map.current) {
+        map.current.triggerRepaint();
+      }
+
+    } catch (error) {
+      console.error('Error updating map:', error);
     }
   }, [points, filters, isLoaded]);
 
@@ -453,6 +578,57 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
           </button>
 
           <button
+            onClick={() => {
+              console.log('Force refreshing map data...');
+              if (analysisData) {
+                loadAnalysisData();
+              } else {
+                loadMockData();
+              }
+            }}
+            className="flex items-center space-x-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+            title="Refresh map data"
+          >
+            <Search className="h-4 w-4" />
+            <span>Refresh</span>
+          </button>
+
+          <button
+            onClick={() => {
+              console.log('Adding test points...');
+              const testPoints: GeospatialPoint[] = [
+                {
+                  id: 'test_1',
+                  latitude: 6.5244,
+                  longitude: 3.3792,
+                  title: 'Test Lagos Point',
+                  description: 'Test point to verify map rendering',
+                  threat_level: 'high',
+                  type: 'incident',
+                  timestamp: new Date().toISOString()
+                },
+                {
+                  id: 'test_2',
+                  latitude: 9.0765,
+                  longitude: 7.3986,
+                  title: 'Test Abuja Point',
+                  description: 'Test point to verify map rendering',
+                  threat_level: 'medium',
+                  type: 'facility',
+                  timestamp: new Date().toISOString()
+                }
+              ];
+              console.log('Setting test points:', testPoints);
+              setPoints(testPoints);
+            }}
+            className="flex items-center space-x-2 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
+            title="Add test points"
+          >
+            <MapPin className="h-4 w-4" />
+            <span>Test</span>
+          </button>
+
+          <button
             onClick={exportMapData}
             className="flex items-center space-x-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
           >
@@ -461,6 +637,46 @@ const GeospatialMap: React.FC<GeospatialMapProps> = ({ analysisData }) => {
           </button>
         </div>
       </div>
+
+      {/* Debug Panel */}
+      {analysisData && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+          <h3 className="font-semibold text-gray-900 mb-2">Debug Information</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div>
+              <span className="text-gray-700 font-medium">Extracted Coordinates:</span>
+              <span className="ml-2 text-gray-900">{analysisData.analysis.geographic_intelligence.coordinates.length}</span>
+              {analysisData.analysis.geographic_intelligence.coordinates.length > 0 && (
+                <ul className="mt-1 text-xs text-gray-600">
+                  {analysisData.analysis.geographic_intelligence.coordinates.map((coord, i) => (
+                    <li key={i}>{coord.latitude.toFixed(4)}, {coord.longitude.toFixed(4)}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <span className="text-gray-700 font-medium">States Found:</span>
+              <span className="ml-2 text-gray-900">{analysisData.analysis.geographic_intelligence.states.length}</span>
+              {analysisData.analysis.geographic_intelligence.states.length > 0 && (
+                <div className="mt-1 text-xs text-gray-600">
+                  {analysisData.analysis.geographic_intelligence.states.join(', ')}
+                </div>
+              )}
+            </div>
+            <div>
+              <span className="text-gray-700 font-medium">Map Points:</span>
+              <span className="ml-2 text-gray-900">{points.length}</span>
+              {points.length > 0 && (
+                <ul className="mt-1 text-xs text-gray-600">
+                  {points.map((point, i) => (
+                    <li key={i}>{point.title} ({point.type})</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Analysis Data Summary */}
       {analysisData && (

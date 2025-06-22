@@ -1,45 +1,36 @@
-// src/components/QueryInterface.tsx - Enhanced Query Interface Component
+// src/components/QueryInterface.tsx - AI Query Interface Component (Complete Fixed Version)
 
 import React, { useState } from 'react';
-import { Search, Send, Brain, Lightbulb, MessageSquare, Loader } from 'lucide-react';
+import { Search, Brain, Loader2, AlertCircle, FileText, MessageSquare, Lightbulb } from 'lucide-react';
 
 interface QueryInterfaceProps {
-  onQueryResponse: (response: string) => void;
-  isLoading: boolean;
-  setIsLoading: (loading: boolean) => void;
+  onQueryResponse?: (response: string) => void;
 }
 
-const QueryInterface: React.FC<QueryInterfaceProps> = ({
-  onQueryResponse,
-  isLoading,
-  setIsLoading
-}) => {
+const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
   const [query, setQuery] = useState('');
-  const [queryHistory, setQueryHistory] = useState<Array<{query: string, response: string, timestamp: Date}>>([]);
+  const [loading, setLoading] = useState(false);
+  const [queryResponse, setQueryResponse] = useState('');
+  const [error, setError] = useState<string | null>(null);
 
-  const suggestedQueries = [
-    "Show me a summary of all incidents",
-    "What are the geographic patterns?",
-    "Analyze crime trends over time",
-    "What's the casualty rate by location?",
-    "Show me forecasted incidents for next quarter",
-    "Which areas have the highest threat levels?",
-    "What are the most common crime types?",
-    "How effective are arrest rates?"
+  const predefinedQueries = [
+    "What are the main security threats mentioned in the documents?",
+    "Summarize the geographic locations and their threat levels",
+    "What criminal activities are most frequently referenced?",
+    "Identify key persons and organizations mentioned",
+    "What are the temporal patterns in the incidents?",
+    "Provide a risk assessment based on the analyzed documents"
   ];
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!query.trim()) return;
 
-    if (!query.trim()) {
-      alert('Please enter a query');
-      return;
-    }
+    setLoading(true);
+    setError(null);
 
     try {
-      setIsLoading(true);
-
-      const response = await fetch('http://localhost:8000/query-documents', {
+      const response = await fetch('http://localhost:8000/query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -52,45 +43,43 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({
       }
 
       const data = await response.json();
+      setQueryResponse(data.response);
 
-      // Add to history
-      setQueryHistory(prev => [{
-        query: query.trim(),
-        response: data.response,
-        timestamp: new Date()
-      }, ...prev]);
+      // Call parent callback if provided
+      if (onQueryResponse) {
+        onQueryResponse(data.response);
+      }
 
-      // Notify parent
-      onQueryResponse(data.response);
-
-      // Clear query
-      setQuery('');
-
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Failed to process query';
-      onQueryResponse(`Error: ${errorMessage}`);
+      setError(null);
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Failed to process query';
+      setError(errorMessage);
+      setQueryResponse('');
     } finally {
-      setIsLoading(false);
+      setLoading(false);
     }
   };
 
-  const handleSuggestedQuery = (suggestedQuery: string) => {
-    setQuery(suggestedQuery);
+  const handlePredefinedQuery = (predefinedQuery: string) => {
+    setQuery(predefinedQuery);
+  };
+
+  const clearQuery = () => {
+    setQuery('');
+    setQueryResponse('');
+    setError(null);
   };
 
   const formatResponse = (response: string) => {
-    // Split response into sections and format
     const sections = response.split('\n\n');
     return sections.map((section, index) => {
       if (section.startsWith('**') && section.endsWith('**')) {
-        // Header
         return (
           <h4 key={index} className="font-semibold text-gray-900 mt-4 mb-2">
             {section.replace(/\*\*/g, '')}
           </h4>
         );
       } else if (section.includes('•')) {
-        // Bullet points
         const items = section.split('\n').filter(item => item.trim());
         return (
           <ul key={index} className="list-disc list-inside space-y-1 mb-3">
@@ -102,7 +91,6 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({
           </ul>
         );
       } else {
-        // Regular paragraph
         return (
           <p key={index} className="text-gray-700 mb-3 leading-relaxed">
             {section}
@@ -117,105 +105,149 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({
       {/* Header */}
       <div className="text-center">
         <h2 className="text-2xl font-bold text-gray-900 mb-2 flex items-center justify-center">
-          <Brain className="h-6 w-6 text-green-600 mr-2" />
-          Intelligent Query Interface
+          <Brain className="h-6 w-6 text-purple-600 mr-2" />
+          AI Query Interface
         </h2>
         <p className="text-gray-600 max-w-2xl mx-auto">
-          Ask questions about your processed documents. Our AI will analyze patterns,
-          extract insights, and provide comprehensive intelligence reports.
+          Ask questions about your analyzed documents using natural language.
+          Get AI-powered insights and intelligence summaries.
         </p>
       </div>
 
-      {/* Query Form */}
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ask about incidents, patterns, trends, forecasts, or specific locations..."
-            className="w-full pl-10 pr-12 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent text-gray-900"
-            disabled={isLoading}
-          />
-          <button
-            type="submit"
-            disabled={isLoading || !query.trim()}
-            className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isLoading ? (
-              <Loader className="h-4 w-4 animate-spin" />
-            ) : (
-              <Send className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      </form>
+      {/* Query Input Section */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <MessageSquare className="h-5 w-5 text-blue-600 mr-2" />
+          Query Input
+        </h3>
 
-      {/* Suggested Queries */}
-      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-        <div className="flex items-center mb-3">
-          <Lightbulb className="h-4 w-4 text-green-600 mr-2" />
-          <h3 className="text-sm font-semibold text-green-800">Suggested Queries:</h3>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-          {suggestedQueries.map((suggestedQuery, index) => (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label htmlFor="query" className="block text-sm font-medium text-gray-700 mb-2">
+              Enter your intelligence query:
+            </label>
+            <textarea
+              id="query"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="e.g., What are the main security threats in Lagos region?"
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent resize-y"
+              rows={4}
+              disabled={loading}
+            />
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              type="submit"
+              disabled={!query.trim() || loading}
+              className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  Processing...
+                </>
+              ) : (
+                <>
+                  <Search className="h-5 w-5 mr-2" />
+                  Submit Query
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={clearQuery}
+              disabled={loading}
+              className="px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors duration-200"
+            >
+              Clear
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* Predefined Queries */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+        <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+          <Lightbulb className="h-5 w-5 text-yellow-600 mr-2" />
+          Suggested Queries
+        </h3>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {predefinedQueries.map((predefinedQuery, index) => (
             <button
               key={index}
-              onClick={() => handleSuggestedQuery(suggestedQuery)}
-              disabled={isLoading}
-              className="text-left p-2 text-sm text-green-700 hover:bg-green-100 rounded border border-green-200 transition-colors disabled:opacity-50"
+              onClick={() => handlePredefinedQuery(predefinedQuery)}
+              disabled={loading}
+              className="text-left p-3 border border-gray-200 rounded-lg hover:bg-blue-50 hover:border-blue-300 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {suggestedQuery}
+              <div className="flex items-start">
+                <Search className="h-4 w-4 text-blue-600 mr-2 mt-0.5 flex-shrink-0" />
+                <span className="text-sm text-gray-700">{predefinedQuery}</span>
+              </div>
             </button>
           ))}
         </div>
       </div>
 
-      {/* Query History */}
-      {queryHistory.length > 0 && (
-        <div className="space-y-4">
-          <h3 className="text-lg font-semibold text-gray-900 flex items-center">
-            <MessageSquare className="h-5 w-5 text-blue-600 mr-2" />
-            Query History
+      {/* Error Display */}
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <AlertCircle className="h-5 w-5 text-red-600 mr-2" />
+            <h3 className="text-lg font-medium text-red-800">Query Error</h3>
+          </div>
+          <p className="text-red-700 mt-1">{error}</p>
+          <button
+            onClick={() => setError(null)}
+            className="mt-3 text-sm text-red-600 hover:text-red-800 underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {/* Query Response */}
+      {queryResponse && (
+        <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+            <Brain className="h-5 w-5 text-green-600 mr-2" />
+            AI Response
           </h3>
 
-          <div className="space-y-4 max-h-96 overflow-y-auto">
-            {queryHistory.map((item, index) => (
-              <div key={index} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                <div className="mb-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-blue-600">Query:</span>
-                    <span className="text-xs text-gray-500">
-                      {item.timestamp.toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-gray-900 bg-gray-50 p-2 rounded border">
-                    {item.query}
-                  </p>
-                </div>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="prose prose-gray max-w-none">
+              {formatResponse(queryResponse)}
+            </div>
+          </div>
 
-                <div>
-                  <span className="text-sm font-medium text-green-600 mb-2 block">Response:</span>
-                  <div className="text-gray-700 prose prose-sm max-w-none">
-                    {formatResponse(item.response)}
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="mt-4 flex justify-end">
+            <button
+              onClick={() => navigator.clipboard.writeText(queryResponse)}
+              className="text-sm text-gray-600 hover:text-gray-800 flex items-center"
+            >
+              <FileText className="h-4 w-4 mr-1" />
+              Copy Response
+            </button>
           </div>
         </div>
       )}
 
-      {/* Tips */}
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-        <h3 className="text-sm font-semibold text-gray-800 mb-2">💡 Query Tips:</h3>
-        <ul className="text-sm text-gray-600 space-y-1">
-          <li>• Be specific about what information you're looking for</li>
-          <li>• Ask about trends, patterns, or comparisons between different areas</li>
-          <li>• Use terms like "analyze", "compare", "forecast" for detailed insights</li>
-          <li>• You can ask about specific time periods, locations, or crime types</li>
-        </ul>
+      {/* Information Card */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <div className="flex items-start">
+          <Brain className="h-5 w-5 text-blue-600 mr-2 mt-0.5" />
+          <div>
+            <h4 className="text-sm font-medium text-blue-800">How it works</h4>
+            <p className="text-sm text-blue-700 mt-1">
+              This AI query interface analyzes your processed documents to provide intelligent responses.
+              You can ask about threats, locations, entities, patterns, and more. The more specific your
+              query, the better the AI can help you extract relevant intelligence insights.
+            </p>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -182,7 +182,7 @@ class IntelligenceAnalyzer:
             'strike', 'hit', 'bomb', 'explode', 'urgent', 'immediate', 'critical'
         ]
 
-        # Nigerian states and common locations
+        # Nigerian states and common locations (enhanced database)
         self.nigerian_states = [
             'lagos', 'kano', 'kaduna', 'oyo', 'rivers', 'bayelsa', 'cross river',
             'akwa ibom', 'abia', 'anambra', 'imo', 'enugu', 'ebonyi', 'delta',
@@ -191,6 +191,97 @@ class IntelligenceAnalyzer:
             'gombe', 'jigawa', 'katsina', 'kebbi', 'sokoto', 'zamfara', 'niger',
             'abuja', 'fct'
         ]
+
+        # Comprehensive Nigerian cities and locations database with coordinates
+        self.nigerian_locations = {
+            # Major cities and state capitals
+            'lagos': {'lat': 6.5244, 'lng': 3.3792, 'type': 'state_capital'},
+            'abuja': {'lat': 9.0765, 'lng': 7.3986, 'type': 'federal_capital'},
+            'kano': {'lat': 12.0022, 'lng': 8.5920, 'type': 'state_capital'},
+            'ibadan': {'lat': 7.3775, 'lng': 3.9470, 'type': 'state_capital'},
+            'port harcourt': {'lat': 4.8156, 'lng': 7.0498, 'type': 'state_capital'},
+            'kaduna': {'lat': 10.5105, 'lng': 7.4165, 'type': 'state_capital'},
+            'benin city': {'lat': 6.3350, 'lng': 5.6037, 'type': 'state_capital'},
+            'maiduguri': {'lat': 11.8311, 'lng': 13.1510, 'type': 'state_capital'},
+            'jos': {'lat': 9.8965, 'lng': 8.8583, 'type': 'state_capital'},
+            'ilorin': {'lat': 8.5000, 'lng': 4.5500, 'type': 'state_capital'},
+            'abeokuta': {'lat': 7.1475, 'lng': 3.3619, 'type': 'state_capital'},
+            'akure': {'lat': 7.2571, 'lng': 5.2058, 'type': 'state_capital'},
+            'awka': {'lat': 6.2120, 'lng': 7.0740, 'type': 'state_capital'},
+            'bauchi': {'lat': 10.3158, 'lng': 9.8442, 'type': 'state_capital'},
+            'calabar': {'lat': 4.9516, 'lng': 8.3220, 'type': 'state_capital'},
+            'damaturu': {'lat': 11.7469, 'lng': 11.9609, 'type': 'state_capital'},
+            'dutse': {'lat': 11.7564, 'lng': 9.3388, 'type': 'state_capital'},
+            'enugu': {'lat': 6.5244, 'lng': 7.5112, 'type': 'state_capital'},
+            'gombe': {'lat': 10.2840, 'lng': 11.1610, 'type': 'state_capital'},
+            'gusau': {'lat': 12.1704, 'lng': 6.6611, 'type': 'state_capital'},
+            'jalingo': {'lat': 8.8833, 'lng': 11.3667, 'type': 'state_capital'},
+            'katsina': {'lat': 12.9908, 'lng': 7.6018, 'type': 'state_capital'},
+            'kebbi': {'lat': 12.4537, 'lng': 4.1994, 'type': 'state_capital'},
+            'lafia': {'lat': 8.4833, 'lng': 8.5167, 'type': 'state_capital'},
+            'lokoja': {'lat': 7.7974, 'lng': 6.7337, 'type': 'state_capital'},
+            'makurdi': {'lat': 7.7340, 'lng': 8.5120, 'type': 'state_capital'},
+            'minna': {'lat': 9.6134, 'lng': 6.5560, 'type': 'state_capital'},
+            'oshogbo': {'lat': 7.7719, 'lng': 4.5567, 'type': 'state_capital'},
+            'owerri': {'lat': 5.4840, 'lng': 7.0351, 'type': 'state_capital'},
+            'sokoto': {'lat': 13.0609, 'lng': 5.2476, 'type': 'state_capital'},
+            'umuahia': {'lat': 5.5265, 'lng': 7.4906, 'type': 'state_capital'},
+            'uyo': {'lat': 5.0515, 'lng': 7.9307, 'type': 'state_capital'},
+            'yenagoa': {'lat': 4.9267, 'lng': 6.2676, 'type': 'state_capital'},
+            'yola': {'lat': 9.2000, 'lng': 12.4833, 'type': 'state_capital'},
+
+            # Major cities and towns
+            'warri': {'lat': 5.5167, 'lng': 5.7500, 'type': 'major_city'},
+            'aba': {'lat': 5.1068, 'lng': 7.3668, 'type': 'major_city'},
+            'onitsha': {'lat': 6.1667, 'lng': 6.7833, 'type': 'major_city'},
+            'katsina': {'lat': 12.9908, 'lng': 7.6018, 'type': 'major_city'},
+            'zaria': {'lat': 11.0804, 'lng': 7.7170, 'type': 'major_city'},
+            'ife': {'lat': 7.4905, 'lng': 4.5621, 'type': 'major_city'},
+            'ogbomoso': {'lat': 8.1336, 'lng': 4.2570, 'type': 'major_city'},
+            'abakaliki': {'lat': 6.3248, 'lng': 8.1142, 'type': 'major_city'},
+            'sapele': {'lat': 5.8939, 'lng': 5.6760, 'type': 'major_city'},
+            'okene': {'lat': 7.5519, 'lng': 6.2350, 'type': 'major_city'},
+
+            # Local Government Areas (LGAs) - sample of major ones
+            'surulere': {'lat': 6.5027, 'lng': 3.3584, 'type': 'lga'},
+            'ikeja': {'lat': 6.5962, 'lng': 3.3431, 'type': 'lga'},
+            'alimosho': {'lat': 6.5833, 'lng': 3.2667, 'type': 'lga'},
+            'agege': {'lat': 6.6186, 'lng': 3.3403, 'type': 'lga'},
+            'kosofe': {'lat': 6.4667, 'lng': 3.3833, 'type': 'lga'},
+            'mushin': {'lat': 6.5240, 'lng': 3.3548, 'type': 'lga'},
+            'oshodi-isolo': {'lat': 6.5244, 'lng': 3.3205, 'type': 'lga'},
+            'shomolu': {'lat': 6.5244, 'lng': 3.3833, 'type': 'lga'},
+            'ikorodu': {'lat': 6.6019, 'lng': 3.5106, 'type': 'lga'},
+            'epe': {'lat': 6.5833, 'lng': 3.9833, 'type': 'lga'},
+            'badagry': {'lat': 6.4319, 'lng': 2.8878, 'type': 'lga'},
+
+            # Border towns and strategic locations
+            'maiduguri': {'lat': 11.8311, 'lng': 13.1510, 'type': 'border_city'},
+            'sokoto': {'lat': 13.0609, 'lng': 5.2476, 'type': 'border_city'},
+            'katsina': {'lat': 12.9908, 'lng': 7.6018, 'type': 'border_city'},
+            'kebbi': {'lat': 12.4537, 'lng': 4.1994, 'type': 'border_city'},
+            'calabar': {'lat': 4.9516, 'lng': 8.3220, 'type': 'border_city'},
+
+            # Commercial centers
+            'apapa': {'lat': 6.4474, 'lng': 3.3903, 'type': 'commercial'},
+            'tincan': {'lat': 6.4667, 'lng': 3.3667, 'type': 'commercial'},
+            'victoria island': {'lat': 6.4281, 'lng': 3.4219, 'type': 'commercial'},
+            'ikoyi': {'lat': 6.4525, 'lng': 3.4328, 'type': 'commercial'},
+            'mainland': {'lat': 6.5244, 'lng': 3.3792, 'type': 'district'},
+            'island': {'lat': 6.4490, 'lng': 3.4152, 'type': 'district'},
+
+            # Airport locations
+            'murtala muhammed airport': {'lat': 6.5772, 'lng': 3.3211, 'type': 'airport'},
+            'nnamdi azikiwe airport': {'lat': 9.0063, 'lng': 7.2631, 'type': 'airport'},
+            'mallam aminu kano airport': {'lat': 12.0476, 'lng': 8.5246, 'type': 'airport'},
+            'port harcourt airport': {'lat': 5.0156, 'lng': 6.9496, 'type': 'airport'},
+
+            # Oil/Gas locations
+            'bonny': {'lat': 4.4500, 'lng': 7.1667, 'type': 'oil_terminal'},
+            'forcados': {'lat': 5.3833, 'lng': 5.4000, 'type': 'oil_terminal'},
+            'escravos': {'lat': 5.5333, 'lng': 5.0667, 'type': 'oil_terminal'},
+            'brass': {'lat': 4.3167, 'lng': 6.2333, 'type': 'oil_terminal'},
+        }
 
     def extract_text_from_file(self, file_content: bytes, filename: str) -> str:
         """Extract text content from various file formats"""
@@ -445,17 +536,23 @@ class IntelligenceAnalyzer:
 
             # Enhanced coordinate extraction patterns
             coord_patterns = [
-                # Decimal degrees: lat, lon
-                r'(-?\d+\.?\d*)[°\s,]+(-?\d+\.?\d*)[°\s]*',
-                # Degrees minutes seconds
-                r'(\d+)[°]\s*(\d+)[\']\s*(\d+\.?\d*)[\"]\s*([NS])\s*,?\s*(\d+)[°]\s*(\d+)[\']\s*(\d+\.?\d*)[\"]\s*([EW])',
-                # GPS coordinates in brackets
-                r'\[(-?\d+\.?\d*),\s*(-?\d+\.?\d*)\]',
-                # Coordinates with labels
-                r'lat[itude]*[:=\s]*(-?\d+\.?\d*)[,\s]*lon[gitude]*[:=\s]*(-?\d+\.?\d*)',
-                # Nigerian common coordinate formats
-                r'(\d+\.?\d*)[°\s]*N[orth]*[,\s]*(\d+\.?\d*)[°\s]*E[ast]*'
+                # Decimal degrees: lat, lon (most common format)
+                r'(\d+\.?\d*)[°\s,]*\s*[-,]\s*(\d+\.?\d*)[°\s]*',
+                # Coordinates with explicit lat/lon labels
+                r'lat[itude]*[:=\s]*(\d+\.?\d*)[,\s]*lon[gitude]*[:=\s]*(\d+\.?\d*)',
+                # Nigerian format: N, E coordinates
+                r'(\d+\.?\d*)[°\s]*N[orth]*[,\s]*(\d+\.?\d*)[°\s]*E[ast]*',
+                # GPS coordinates in brackets or parentheses
+                r'[\[\(](\d+\.?\d*)[,\s]+(\d+\.?\d*)[\]\)]',
+                # Coordinates word "coordinates" nearby
+                r'coordinates[:\s]*(\d+\.?\d*)[,\s]+(\d+\.?\d*)',
+                # Simple decimal format with comma separation
+                r'\b(\d+\.\d{4}),\s*(\d+\.\d{4})\b',
+                # Position/located at format
+                r'(?:position|located at)[:\s]*(\d+\.?\d*)[,\s]+(\d+\.?\d*)'
             ]
+
+            coordinate_matches_found = []
 
             for pattern in coord_patterns:
                 matches = re.finditer(pattern, text, re.IGNORECASE)
@@ -463,36 +560,34 @@ class IntelligenceAnalyzer:
                     try:
                         groups = match.groups()
                         if len(groups) >= 2:
-                            if len(groups) == 2:  # Simple lat, lon
-                                lat, lon = float(groups[0]), float(groups[1])
-                            elif len(groups) == 8:  # DMS format
-                                # Convert DMS to decimal degrees
-                                lat_deg, lat_min, lat_sec, lat_dir = groups[0:4]
-                                lon_deg, lon_min, lon_sec, lon_dir = groups[4:8]
+                            lat, lon = float(groups[0]), float(groups[1])
 
-                                lat = float(lat_deg) + float(lat_min) / 60 + float(lat_sec) / 3600
-                                lon = float(lon_deg) + float(lon_min) / 60 + float(lon_sec) / 3600
-
-                                if lat_dir.upper() == 'S':
-                                    lat = -lat
-                                if lon_dir.upper() == 'W':
-                                    lon = -lon
-                            else:
-                                continue
-
-                            # Validate coordinates for Nigeria region
-                            if 4.0 <= lat <= 14.0 and 2.0 <= lon <= 15.0:
+                            # Validate coordinates for Nigeria region (extended bounds)
+                            if 3.0 <= lat <= 15.0 and 2.0 <= lon <= 16.0:
                                 # Find nearby location name
                                 location_name = self._find_location_context(text, match.start(), match.end())
 
-                                coordinates.append({
+                                coord_info = {
                                     'latitude': round(lat, 6),
                                     'longitude': round(lon, 6),
-                                    'location_name': location_name or 'Unidentified Location',
+                                    'location_name': location_name or f'Location {lat:.4f}, {lon:.4f}',
                                     'confidence': 0.9
-                                })
+                                }
+
+                                # Avoid duplicates
+                                is_duplicate = any(
+                                    abs(coord['latitude'] - coord_info['latitude']) < 0.001 and
+                                    abs(coord['longitude'] - coord_info['longitude']) < 0.001
+                                    for coord in coordinate_matches_found
+                                )
+
+                                if not is_duplicate:
+                                    coordinate_matches_found.append(coord_info)
+
                     except (ValueError, IndexError):
                         continue
+
+            coordinates = coordinate_matches_found
 
             # Extract locations using spaCy if available with better context
             if nlp:
