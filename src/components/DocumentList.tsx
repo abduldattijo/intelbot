@@ -1,11 +1,25 @@
-// src/components/DocumentList.tsx - Document Management Component
+// src/components/DocumentList.tsx - Document Management Component (FIXED)
 
 import React, { useState, useEffect } from 'react';
-import { FileText, Calendar, Eye, Trash2, Download, Search, Filter, AlertCircle } from 'lucide-react';
-import { Document } from '../App';
+import { FileText, Calendar, Eye, Trash2, Download, Search, Filter, AlertCircle, Loader2 } from 'lucide-react';
+
+// This interface should be defined in or imported into App.tsx, but we define it here
+// for completeness if it's not already globally available.
+export interface Document {
+  id: string;
+  content: string;
+  metadata: {
+    filename: string;
+    file_type: string;
+    uploaded_at: string;
+    file_size: number;
+  };
+  analysis: any; // Simplified for this component's context
+}
+
 
 interface DocumentListProps {
-  onDocumentSelect: (document: Document) => void;
+  onDocumentSelect: (documentId: string) => void; // Pass ID instead of full object
 }
 
 interface DocumentListItem {
@@ -24,6 +38,7 @@ const DocumentList: React.FC<DocumentListProps> = ({ onDocumentSelect }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<'date' | 'filename' | 'confidence'>('date');
   const [filterType, setFilterType] = useState<string>('all');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -48,28 +63,35 @@ const DocumentList: React.FC<DocumentListProps> = ({ onDocumentSelect }) => {
     }
   };
 
-  const fetchDocumentDetails = async (docId: string) => {
-    try {
-      const response = await fetch(`http://localhost:8000/document/${docId}`);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      onDocumentSelect(data);
-    } catch (err) {
-      alert(`Failed to load document details: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    }
-  };
-
   const deleteDocument = async (docId: string, filename: string) => {
-    if (!confirm(`Are you sure you want to delete "${filename}"?`)) {
+    if (!confirm(`Are you sure you want to delete "${filename}"? This action cannot be undone.`)) {
       return;
     }
 
-    // Note: Delete endpoint would need to be implemented in backend
-    alert('Delete functionality would be implemented in the backend');
+    setDeletingId(docId); // Set loading state for this specific item
+
+    try {
+      const response = await fetch(`http://localhost:8000/document/${docId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        // Try to get error message from backend if available
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.detail || `Failed to delete document. Status: ${response.status}`);
+      }
+
+      // If successful, remove the document from the local state
+      setDocuments(prevDocuments => prevDocuments.filter(doc => doc.id !== docId));
+      alert(`Successfully deleted "${filename}".`);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
+      console.error('Deletion failed:', errorMessage);
+      alert(`Error: ${errorMessage}`);
+    } finally {
+      setDeletingId(null); // Clear loading state
+    }
   };
 
   const exportDocument = (doc: DocumentListItem) => {
@@ -266,9 +288,10 @@ const DocumentList: React.FC<DocumentListProps> = ({ onDocumentSelect }) => {
 
                 <div className="flex items-center space-x-2 ml-4">
                   <button
-                    onClick={() => fetchDocumentDetails(doc.id)}
+                    onClick={() => onDocumentSelect(doc.id)}
                     className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                     title="View Details"
+                    disabled={deletingId === doc.id}
                   >
                     <Eye className="h-4 w-4" />
                   </button>
@@ -277,16 +300,18 @@ const DocumentList: React.FC<DocumentListProps> = ({ onDocumentSelect }) => {
                     onClick={() => exportDocument(doc)}
                     className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
                     title="Export"
+                    disabled={deletingId === doc.id}
                   >
                     <Download className="h-4 w-4" />
                   </button>
 
                   <button
                     onClick={() => deleteDocument(doc.id, doc.filename)}
-                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                    className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors disabled:text-gray-400"
                     title="Delete"
+                    disabled={deletingId === doc.id}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    {deletingId === doc.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   </button>
                 </div>
               </div>

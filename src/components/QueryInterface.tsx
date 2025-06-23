@@ -1,6 +1,7 @@
-// src/components/QueryInterface.tsx - Enhanced RAG-powered Query Interface
+// src/components/QueryInterface.tsx - Enhanced RAG-powered Query Interface (FIXED)
 
 import React, { useState, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown'; // <--- IMPORT THE LIBRARY
 import { Search, Brain, Loader2, AlertCircle, FileText, MessageSquare, Lightbulb, Database, TrendingUp, Users, MapPin, Clock, CheckCircle, XCircle } from 'lucide-react';
 
 interface QuerySource {
@@ -9,7 +10,7 @@ interface QuerySource {
   rank: number;
 }
 
-interface QueryResponse {
+export interface QueryResponse {
   response: string;
   sources: QuerySource[];
   query: string;
@@ -28,7 +29,7 @@ interface RAGStats {
 }
 
 interface QueryInterfaceProps {
-  onQueryResponse?: (response: string) => void;
+  onQueryResponse?: (response: QueryResponse) => void;
 }
 
 const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
@@ -97,7 +98,7 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
 
       // Call parent callback if provided
       if (onQueryResponse) {
-        onQueryResponse(data.response);
+        onQueryResponse(data);
       }
 
       setError(null);
@@ -120,46 +121,10 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
     setError(null);
   };
 
-  const formatResponse = (response: string) => {
-    const sections = response.split('\n\n');
-    return sections.map((section, index) => {
-      if (section.startsWith('**') && section.endsWith('**')) {
-        return (
-          <h4 key={index} className="font-semibold text-gray-900 mt-4 mb-2 text-lg">
-            {section.replace(/\*\*/g, '')}
-          </h4>
-        );
-      } else if (section.includes('•') || section.includes('-')) {
-        const items = section.split('\n').filter(item => item.trim());
-        return (
-          <ul key={index} className="list-disc list-inside space-y-1 mb-3">
-            {items.map((item, itemIndex) => (
-              <li key={itemIndex} className="text-gray-700">
-                {item.replace(/^[•\-]\s*/, '').trim()}
-              </li>
-            ))}
-          </ul>
-        );
-      } else if (section.match(/^\d+\./)) {
-        const items = section.split('\n').filter(item => item.trim());
-        return (
-          <ol key={index} className="list-decimal list-inside space-y-1 mb-3">
-            {items.map((item, itemIndex) => (
-              <li key={itemIndex} className="text-gray-700">
-                {item.replace(/^\d+\.\s*/, '').trim()}
-              </li>
-            ))}
-          </ol>
-        );
-      } else {
-        return (
-          <p key={index} className="text-gray-700 mb-3 leading-relaxed">
-            {section}
-          </p>
-        );
-      }
-    });
-  };
+  // THIS FUNCTION IS NO LONGER NEEDED AND CAN BE REMOVED
+  /*
+  const formatResponse = (response: string) => { ... };
+  */
 
   const getSimilarityColor = (similarity: number) => {
     if (similarity >= 0.8) return 'text-green-600 bg-green-50';
@@ -355,8 +320,9 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
               </div>
             ) : (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                {/* FIX: Use the ReactMarkdown component here */}
                 <div className="prose prose-gray max-w-none">
-                  {formatResponse(queryResponse.response)}
+                  <ReactMarkdown>{queryResponse.response}</ReactMarkdown>
                 </div>
               </div>
             )}
