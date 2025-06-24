@@ -30,3 +30,12 @@ faiss-cpu>=1.7.4
 sentence-transformers>=2.2.2
 tiktoken>=0.5.1
 python-dotenv>=1.0.0
+
+
+
+
+# Data Science & Machine Learning Forecasting
+
+
+
+statsmodels>=0.14.0 # <-- ADDED FOR FORECASTING
