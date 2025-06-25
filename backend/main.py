@@ -1,4 +1,4 @@
-# main.py - ENHANCED DATA EXTRACTION
+# main.py - FINAL VERSION WITH ALL CORRECTIONS AND AI-POWERED EXTRACTION
 
 import os
 import uuid
@@ -6,7 +6,6 @@ import time
 import logging
 import json
 import sqlite3
-import random
 import re
 import pickle
 from datetime import datetime
@@ -31,11 +30,11 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Intelligence Document Analyzer API", version="13.1.0")
+app = FastAPI(title="Intelligence Document Analyzer API", version="16.0.1 (Live AI Forecast)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
-# --- Pydantic Models (No changes) ---
+# --- Pydantic Models ---
 class DocumentMetadata(BaseModel): filename: str; file_type: str; uploaded_at: str; file_size: int
 
 
@@ -89,331 +88,32 @@ Optional[int] = 0; timestamp: Optional[str] = None; model: Optional[str] = None;
 FORECAST_MODEL: Optional[SARIMAXResults] = None
 
 
-# --- ENHANCED Data Extraction Helper with Improved Logic ---
-def extract_monthly_incidents(document_text: str) -> Dict[str, int]:
-    """
-    Generic extraction of monthly crime incidents from security reports.
+# --- AI-POWERED DATA EXTRACTION HELPER ---
+def extract_incidents_with_llm(report_text: str) -> Optional[int]:
+    try:
+        if not openai.api_key:
+            logger.error("OpenAI API key not configured. Cannot perform AI-powered data extraction.")
+            return None
 
-    This function uses multiple extraction strategies and handles various text patterns
-    found in security documents. It works with any year and any incident numbers.
-
-    Returns:
-        Dict[str, int]: Dictionary mapping month names to incident counts
-    """
-    monthly_incidents = {}
-
-    # Auto-detect the year from the document
-    year_match = re.search(r"(?:FOR (?:THE MONTH OF )?\w+,?\s*|ROBBERY FOR \w+,?\s*)(\d{4})", document_text,
-                           re.IGNORECASE)
-    document_year = year_match.group(1) if year_match else "20\d{2}"  # fallback pattern
-
-    logger.info(f"Detected document year: {document_year}")
-
-    # Split document into sections by report headers
-    reports = re.split(r"RETURNS ON ARMED BANDITRY/?", document_text, flags=re.IGNORECASE)
-
-    logger.info(f"Split document into {len(reports)} sections for analysis")
-
-    for i, report in enumerate(reports):
-        if not report.strip():
-            continue
-
-        # Find which month this report covers (dynamic year detection)
-        month_pattern = rf"FOR (?:THE MONTH OF )?(\w+),?\s*{document_year}"
-        month_match = re.search(month_pattern, report, re.IGNORECASE)
-
-        if month_match:
-            month_name = month_match.group(1).upper()
-
-            # Skip if already found this month (handles duplicates)
-            if month_name in monthly_incidents:
-                logger.debug(f"Skipping duplicate month: {month_name}")
-                continue
-
-            # Analyze first 1200 characters of the report for better context
-            first_section = report[:1200]
-            incidents = None
-            extraction_method = None
-
-            # Strategy 1: "total of [written number] (number) incidents"
-            pattern1 = re.search(r"total of[^(]*\((\d+)\)[^.]*incidents", first_section, re.IGNORECASE)
-            if pattern1:
-                incidents = int(pattern1.group(1))
-                extraction_method = "total_pattern"
-
-            # Strategy 2: "to [written number] (number) incidents/cases" - for current month
-            if not incidents:
-                pattern2 = re.search(r"to[^(]*\((\d+)\)[^.]*(?:incidents|cases)", first_section, re.IGNORECASE)
-                if pattern2:
-                    incidents = int(pattern2.group(1))
-                    extraction_method = "to_pattern"
-
-            # Strategy 3: "with [written number] (number) incidents" - for November/December style
-            if not incidents:
-                pattern3 = re.search(r"with[^(]*\((\d+)\)[^.]*incidents", first_section, re.IGNORECASE)
-                if pattern3:
-                    incidents = int(pattern3.group(1))
-                    extraction_method = "with_pattern"
-
-            # Strategy 4: General (number) incidents/cases with optional words
-            if not incidents:
-                pattern4 = re.search(r"\((\d+)\)\s*(?:criminal\s*)?(?:incidents|cases)", first_section, re.IGNORECASE)
-                if pattern4:
-                    incidents = int(pattern4.group(1))
-                    extraction_method = "general_pattern"
-
-            # Strategy 5: "recorded [number] incidents" pattern
-            if not incidents:
-                pattern5 = re.search(r"recorded[^(]*\((\d+)\)[^.]*(?:incidents|cases)", first_section, re.IGNORECASE)
-                if pattern5:
-                    incidents = int(pattern5.group(1))
-                    extraction_method = "recorded_pattern"
-
-            # Strategy 6: Look for standalone numbers in reasonable context
-            if not incidents:
-                pattern6 = re.search(r"(?:witnessed|recorded|reported)[^(]*(\d{3,4})[^.]*(?:incidents|cases)",
-                                     first_section, re.IGNORECASE)
-                if pattern6:
-                    incidents = int(pattern6.group(1))
-                    extraction_method = "standalone_pattern"
-
-            # Strategy 7: Handle cross-month references (for cases like "from X to Y incidents")
-            if not incidents and month_name in first_section.upper():
-                # Look for "to (number) incidents in [MONTH]" or "to (number) incidents in [month], 2020"
-                month_specific_pattern = re.search(rf"to[^(]*\((\d+)\)[^.]*(?:incidents|cases)[^.]*in {month_name}",
-                                                   first_section, re.IGNORECASE)
-                if month_specific_pattern:
-                    incidents = int(month_specific_pattern.group(1))
-                    extraction_method = "month_specific_pattern"
-
-                # Alternative: Look for "[MONTH] recorded (number) incidents"
-                if not incidents:
-                    month_recorded_pattern = re.search(rf"{month_name}[^(]*recorded[^(]*\((\d+)\)", first_section,
-                                                       re.IGNORECASE)
-                    if month_recorded_pattern:
-                        incidents = int(month_recorded_pattern.group(1))
-                        extraction_method = "month_recorded_pattern"
-
-            # Strategy 8: Look for month-year specific patterns
-            if not incidents:
-                # Pattern like "in [MONTH] 2020, there were (number) incidents"
-                month_year_pattern = re.search(rf"in {month_name}[^(]*{document_year}[^(]*\((\d+)\)", first_section,
-                                               re.IGNORECASE)
-                if month_year_pattern:
-                    incidents = int(month_year_pattern.group(1))
-                    extraction_method = "month_year_pattern"
-
-            # Validate the extracted number (reasonable range for monthly incidents)
-            if incidents and 50 <= incidents <= 2000:
-                monthly_incidents[month_name] = incidents
-                logger.info(f"🎯 {month_name}: {incidents} incidents using {extraction_method}")
-            elif incidents:
-                logger.warning(f"❌ Rejected {month_name}: {incidents} incidents (outside reasonable range)")
-            else:
-                logger.warning(f"⚠️  No incidents found for {month_name} - trying document-wide search")
-                # Debug: Show first 300 characters for manual review
-                logger.debug(f"   Sample text: {first_section[:300].replace(chr(10), ' ')}")
-
-    # Special handling based on document patterns - MADE GENERIC
-
-    # AGGRESSIVE DOCUMENT-WIDE SEARCH for missing months
-    missing_months = [month for month in ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-                                          "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
-                      if month not in monthly_incidents]
-
-    if missing_months:
-        logger.info(f"🔍 Searching entire document for missing months: {missing_months}")
-
-        for month in missing_months:
-            found = False
-
-            # Comprehensive search patterns for each missing month
-            search_patterns = [
-                # Pattern 1: "to (number) incidents/cases in [MONTH]"
-                rf"to[^(]*\((\d+)\)[^.]*(?:incidents|cases)[^.]*in {month}",
-                # Pattern 2: "in [MONTH] [YEAR], (number) incidents"
-                rf"in {month}[^(]*{document_year}[^(]*\((\d+)\)",
-                # Pattern 3: "[MONTH] recorded/had/witnessed (number)"
-                rf"{month}[^(]*(?:recorded|had|witnessed)[^(]*\((\d+)\)",
-                # Pattern 4: "(number) incidents/cases in [MONTH]"
-                rf"\((\d+)\)[^.]*(?:incidents|cases)[^.]*in {month}",
-                # Pattern 5: "for [MONTH] (number) cases/incidents"
-                rf"for {month}[^(]*\((\d+)\)[^.]*(?:cases|incidents)",
-                # Pattern 6: "[MONTH] [YEAR] had (number)"
-                rf"{month}[^(]*{document_year}[^(]*had[^(]*\((\d+)\)",
-                # Pattern 7: "during [MONTH] (number) incidents"
-                rf"during {month}[^(]*\((\d+)\)[^.]*(?:incidents|cases)",
-                # Pattern 8: Cross-reference from other months
-                rf"(?:against|from|previous month of|preceding month of)[^(]*\((\d+)\)[^.]*(?:incidents|cases)[^.]*{month}",
+        truncated_text = report_text[:1200]
+        completion = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            temperature=0.0,
+            messages=[
+                {"role": "system",
+                 "content": "You are a data extraction expert. Read the following text from a security report. Your task is to find the total number of incidents for the main month being discussed. Ignore any numbers from previous months mentioned in comparisons. Respond with ONLY the integer number and nothing else. For example: 568"},
+                {"role": "user", "content": truncated_text}
             ]
-
-            for i, pattern in enumerate(search_patterns, 1):
-                if found:
-                    break
-
-                matches = re.finditer(pattern, document_text, re.IGNORECASE)
-                for match in matches:
-                    incidents = int(match.group(1))
-                    if 50 <= incidents <= 2000:
-                        monthly_incidents[month] = incidents
-                        logger.info(f"🎯 Found {month}: {incidents} incidents via document-wide search (pattern {i})")
-                        found = True
-                        break
-
-            if not found:
-                logger.warning(f"❌ Could not find {month} data in entire document")
-
-    # POST-PROCESSING: Fix known cross-contamination patterns
-    # This is a targeted fix for the systematic number shifting issue
-    logger.info("🔧 Applying cross-contamination corrections...")
-
-    # Define the correct values based on document analysis
-    known_correct_values = {
-        "JANUARY": 632,  # Always correct
-        "FEBRUARY": 578,  # Always correct
-        "MARCH": 700,  # Always correct
-        "APRIL": 568,  # Always correct
-        "MAY": 500,  # Often gets 568 (April's number)
-        "JUNE": 505,  # Often gets 500 (May's number)
-        "JULY": 713,  # Often gets 505 (June's number)
-        "AUGUST": 645,  # Often gets 713 (July's number)
-        "SEPTEMBER": None,  # Not in document
-        "OCTOBER": 844,  # Usually correct when found
-        "NOVEMBER": 932,  # Always correct
-        "DECEMBER": 736  # Always correct
-    }
-
-    # Apply specific corrections for months with known cross-contamination
-    corrections_made = []
-
-    # Correction 1: MAY should be 500, not 568
-    if "MAY" in monthly_incidents and monthly_incidents["MAY"] == 568:
-        # Search document for the specific MAY pattern
-        may_patterns = [
-            r"to five hundred \((\d+)\) incidents in May",
-            r"May, 2020.*?(\d+) incidents",
-            r"to.*?\(500\)[^.]*(?:incidents|cases)",  # Look specifically for 500
-        ]
-
-        for pattern in may_patterns:
-            may_match = re.search(pattern, document_text, re.IGNORECASE)
-            if may_match:
-                # Check if this pattern has a capture group
-                if "500" in may_match.group(0):  # Use group(0) for full match
-                    monthly_incidents["MAY"] = 500
-                    corrections_made.append("MAY: 568 → 500 (pattern found)")
-                    break
-                elif may_match.groups() and may_match.group(1) == "500":  # Check if group exists
-                    monthly_incidents["MAY"] = 500
-                    corrections_made.append("MAY: 568 → 500 (capture group)")
-                    break
-
-        # Fallback: Use known correct value
-        if monthly_incidents["MAY"] == 568:
-            monthly_incidents["MAY"] = 500
-            corrections_made.append("MAY: 568 → 500 (fallback correction)")
-
-    # Correction 2: JUNE should be 505, not 500
-    if "JUNE" in monthly_incidents and monthly_incidents["JUNE"] == 500:
-        # Search for JUNE-specific patterns
-        june_patterns = [
-            r"June.*?five hundred and five \((\d+)\)",
-            r"to.*?\(505\)[^.]*(?:incidents|cases)",
-            r"June, 2020.*?505",
-        ]
-
-        for pattern in june_patterns:
-            june_match = re.search(pattern, document_text, re.IGNORECASE)
-            if june_match and "505" in june_match.group(0):
-                monthly_incidents["JUNE"] = 505
-                corrections_made.append("JUNE: 500 → 505 (pattern found)")
-                break
-
-        # Fallback: Use known correct value
-        if monthly_incidents["JUNE"] == 500:
-            monthly_incidents["JUNE"] = 505
-            corrections_made.append("JUNE: 500 → 505 (fallback correction)")
-
-    # Correction 3: JULY should be 713, not 505
-    if "JULY" in monthly_incidents and monthly_incidents["JULY"] == 505:
-        # Search for JULY-specific patterns
-        july_patterns = [
-            r"seven hundred and thirteen \((\d+)\).*?July",
-            r"July.*?713",
-            r"to.*?\(713\)[^.]*(?:incidents|cases)",
-        ]
-
-        for pattern in july_patterns:
-            july_match = re.search(pattern, document_text, re.IGNORECASE)
-            if july_match and "713" in july_match.group(0):
-                monthly_incidents["JULY"] = 713
-                corrections_made.append("JULY: 505 → 713 (pattern found)")
-                break
-
-        # Fallback: Use known correct value
-        if monthly_incidents["JULY"] == 505:
-            monthly_incidents["JULY"] = 713
-            corrections_made.append("JULY: 505 → 713 (fallback correction)")
-
-    # Correction 4: AUGUST should be 645, not 713
-    if "AUGUST" in monthly_incidents and monthly_incidents["AUGUST"] == 713:
-        # Search for AUGUST-specific patterns
-        august_patterns = [
-            r"six hundred and forty-five \((\d+)\).*?August",
-            r"August.*?645",
-            r"to.*?\(645\)[^.]*(?:incidents|cases)",
-        ]
-
-        for pattern in august_patterns:
-            august_match = re.search(pattern, document_text, re.IGNORECASE)
-            if august_match and "645" in august_match.group(0):
-                monthly_incidents["AUGUST"] = 645
-                corrections_made.append("AUGUST: 713 → 645 (pattern found)")
-                break
-
-        # Fallback: Use known correct value
-        if monthly_incidents["AUGUST"] == 713:
-            monthly_incidents["AUGUST"] = 645
-            corrections_made.append("AUGUST: 713 → 645 (fallback correction)")
-
-    # Log all corrections made
-    if corrections_made:
-        logger.info(f"✅ Applied {len(corrections_made)} cross-contamination corrections:")
-        for correction in corrections_made:
-            logger.info(f"   🔧 {correction}")
-    else:
-        logger.info("ℹ️  No cross-contamination corrections needed")
-
-    # Verify the corrections resulted in expected totals
-    corrected_total = sum(monthly_incidents.values())
-    expected_total = 6253  # Known correct total for 11 months
-
-    if abs(corrected_total - expected_total) < 100:  # Allow small variance
-        logger.info(f"🎯 PERFECT! Corrected total: {corrected_total} incidents (target: ~{expected_total})")
-    else:
-        logger.warning(f"⚠️  Total after corrections: {corrected_total} incidents (expected: ~{expected_total})")
-
-    # Log final results
-    logger.info(
-        f"Successfully extracted monthly data for {len(monthly_incidents)} months: {list(monthly_incidents.keys())}")
-
-    # Sort results by month order for better logging
-    month_order = ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-                   "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"]
-
-    total_incidents = 0
-    for month in month_order:
-        if month in monthly_incidents:
-            incidents = monthly_incidents[month]
-            total_incidents += incidents
-            logger.info(f"  {month}: {incidents:,} incidents")
-
-    logger.info(f"Total extracted incidents across all months: {total_incidents:,}")
-
-    return monthly_incidents
+        )
+        response_text = completion.choices[0].message.content
+        cleaned_number = re.sub(r'\D', '', response_text)
+        return int(cleaned_number)
+    except Exception as e:
+        logger.error(f"LLM extraction failed: {e}")
+        return None
 
 
-# --- Database and Application Logic (Unchanged) ---
+# --- Database and Application Logic ---
 class DocumentStore:
     def __init__(self, db_path: str = "documents.db"):
         self.db_path = db_path;
@@ -489,8 +189,6 @@ class DocumentStore:
                               NOT
                               NULL,
                               total_incidents
-                              INTEGER,
-                              total_casualties
                               INTEGER
                           )''');
         self._conn.commit();
@@ -501,8 +199,8 @@ class DocumentStore:
         cursor = self._conn.cursor()
         try:
             cursor.execute(
-                '''INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents, total_casualties) VALUES (?, ?, ?)''',
-                (data['report_date'], data.get('total_incidents', 0), data.get('total_casualties', 0)));
+                '''INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)''',
+                (data['report_date'], data.get('total_incidents', 0)));
             self._conn.commit();
             logger.info(
                 f"Stored time-series data for date {data['report_date']} with {data['total_incidents']} incidents.")
@@ -763,7 +461,10 @@ class SimpleRAG:
 def on_startup():
     global FORECAST_MODEL
     api_key = os.getenv("OPENAI_API_KEY");
-    if not api_key: logger.warning("OPENAI_API_KEY not set")
+    if not api_key:
+        logger.warning("OPENAI_API_KEY not set. RAG queries and AI extraction will fail.")
+    else:
+        openai.api_key = api_key
     app.state.store = DocumentStore();
     app.state.analyzer = SimpleAnalyzer();
     app.state.rag_system = SimpleRAG(api_key or "fake-key", app.state.store);
@@ -787,147 +488,47 @@ def extract_text(file: UploadFile) -> str:
     raise HTTPException(400, "Unsupported file type")
 
 
-# --- ENHANCED API Endpoints ---
+# --- API Endpoints ---
 @app.post("/upload-document", response_model=AnalyzedDocument)
 async def handle_upload(file: UploadFile = File(...)):
-    """Enhanced document upload with improved monthly incident extraction."""
     try:
         text = extract_text(file)
-        if not text.strip():
-            raise HTTPException(400, "Document is empty")
+        if not text.strip(): raise HTTPException(400, "Document is empty")
 
-        logger.info(f"Processing document: {file.filename} ({len(text)} characters)")
+        report_delimiter = "RETURNS ON ARMED BANDITRY/"
+        report_sections = text.split(report_delimiter)
 
-        # Use the enhanced extraction logic
-        monthly_data = extract_monthly_incidents(text)
+        num_reports_found = 0
+        for section in report_sections[1:]:
+            full_report_text = report_delimiter + section
 
-        if monthly_data:
-            logger.info(f"Successfully extracted monthly data for {len(monthly_data)} months")
+            date_match = re.search(r"FOR (?:THE MONTH OF )?(\w+),?\s*(\d{4})", full_report_text, re.IGNORECASE)
+            if not date_match: continue
 
-            # Auto-detect the year from the document for proper date formatting
-            year_match = re.search(r"(?:FOR (?:THE MONTH OF )?\w+,?\s*|ROBBERY FOR \w+,?\s*)(\d{4})", text,
-                                   re.IGNORECASE)
-            document_year = int(year_match.group(1)) if year_match else 2020  # fallback to 2020
+            month, year = date_match.groups()
 
-            logger.info(f"Using document year: {document_year} for time-series storage")
+            incidents = extract_incidents_with_llm(full_report_text)
 
-            # Store each month's data in the time series database
-            successful_stores = 0
-            for month_name, incidents in monthly_data.items():
-                try:
-                    # Convert month name to date using detected year
-                    report_date = datetime.strptime(f"1 {month_name} {document_year}", "%d %B %Y").strftime("%Y-%m-%d")
-                    time_series_entry = {
-                        "report_date": report_date,
-                        "total_incidents": incidents,
-                        "total_casualties": 0  # Default, can be enhanced later
-                    }
-                    app.state.store.store_time_series_data(time_series_entry)
-                    successful_stores += 1
-                    logger.info(f"Stored time-series data for {month_name} {document_year}: {incidents} incidents")
-                except ValueError as e:
-                    logger.warning(f"Could not parse date for month {month_name} {document_year}: {e}")
-                except Exception as e:
-                    logger.error(f"Error storing time-series data for {month_name} {document_year}: {e}")
+            if incidents:
+                report_date = datetime.strptime(f"1 {month} {year}", "%d %B %Y").strftime("%Y-%m-%d")
+                time_series_entry = {"report_date": report_date, "total_incidents": incidents}
+                app.state.store.store_time_series_data(time_series_entry)
+                num_reports_found += 1
 
-            logger.info(f"Successfully stored time-series data for {successful_stores}/{len(monthly_data)} months")
+        logger.info(f"Found and processed {num_reports_found} monthly reports using AI extraction.")
 
-            # Create summary of extracted data for the intelligence summary
-            total_extracted_incidents = sum(monthly_data.values())
-            months_summary = ", ".join([f"{month}: {incidents}" for month, incidents in
-                                        sorted(monthly_data.items(),
-                                               key=lambda x: ["JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE",
-                                                              "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER",
-                                                              "DECEMBER"].index(x[0]))])
-
-            logger.info(
-                f"Monthly extraction summary for {document_year} - Total: {total_extracted_incidents:,} incidents across {len(monthly_data)} months")
-        else:
-            logger.warning("No monthly time-series data was extracted from the document")
-            total_extracted_incidents = 0
-            months_summary = "No monthly data extracted"
-
-        # Continue with standard document analysis
-        doc_id = str(uuid.uuid4())
-        metadata = DocumentMetadata(
-            filename=file.filename,
-            file_type=file.filename.split('.')[-1].lower(),
-            uploaded_at=datetime.now().isoformat(),
-            file_size=len(text)
-        )
-
+        doc_id = str(uuid.uuid4());
+        metadata = DocumentMetadata(filename=file.filename, file_type=file.filename.split('.')[-1].lower(),
+                                    uploaded_at=datetime.now().isoformat(), file_size=len(text))
         analysis = app.state.analyzer.analyze_document(text, metadata)
-
-        # Enhance the intelligence summary with extraction results
-        if monthly_data:
-            enhanced_summary = f"{analysis.intelligence_summary} Monthly incident extraction for {document_year}: {total_extracted_incidents:,} total incidents across {len(monthly_data)} months ({months_summary}). Time-series data stored for forecasting analysis."
-            analysis.intelligence_summary = enhanced_summary
-
-        # Store document and add to RAG system
-        app.state.store.store_document(doc_id, file.filename, text, analysis)
+        app.state.store.store_document(doc_id, file.filename, text, analysis);
         app.state.rag_system.add_document(doc_id, file.filename, text)
-
-        # Return analyzed document with truncated content for API response
-        return AnalyzedDocument(
-            id=doc_id,
-            content=text[:2000] + "..." if len(text) > 2000 else text,
-            metadata=metadata,
-            analysis=analysis
-        )
-
+        return AnalyzedDocument(id=doc_id, content=text[:2000] + "..." if len(text) > 2000 else text, metadata=metadata,
+                                analysis=analysis)
     except Exception as e:
-        logger.error(f"Upload failed for {file.filename}: {e}")
-        raise HTTPException(500, f"Upload error: {e}")
+        logger.error(f"Upload failed: {e}"); raise HTTPException(500, f"Upload error: {e}")
 
 
-# --- Additional API endpoint for monthly data extraction results ---
-@app.get("/extraction-stats")
-async def get_extraction_stats():
-    """Get statistics about monthly data extraction from uploaded documents."""
-    try:
-        time_series_df = app.state.store.get_all_time_series_data()
-
-        if time_series_df.empty:
-            return {
-                "status": "no_data",
-                "message": "No time-series data available",
-                "total_months": 0,
-                "total_incidents": 0
-            }
-
-        total_months = len(time_series_df)
-        total_incidents = int(time_series_df['total_incidents'].sum())
-        avg_incidents = int(time_series_df['total_incidents'].mean())
-
-        # Monthly breakdown
-        monthly_breakdown = []
-        for date, row in time_series_df.iterrows():
-            monthly_breakdown.append({
-                "month": date.strftime("%B %Y"),
-                "incidents": int(row['total_incidents'])
-            })
-
-        return {
-            "status": "success",
-            "total_months": total_months,
-            "total_incidents": total_incidents,
-            "average_incidents_per_month": avg_incidents,
-            "monthly_breakdown": monthly_breakdown,
-            "date_range": {
-                "start": time_series_df.index.min().strftime("%Y-%m-%d"),
-                "end": time_series_df.index.max().strftime("%Y-%m-%d")
-            }
-        }
-
-    except Exception as e:
-        logger.error(f"Error getting extraction stats: {e}")
-        return {
-            "status": "error",
-            "message": f"Error retrieving extraction statistics: {e}"
-        }
-
-
-# --- Rest of API endpoints unchanged ---
 @app.post("/query", response_model=QueryResponse)
 async def handle_query(request: QueryRequest):
     try:
@@ -1024,10 +625,7 @@ async def get_forecast_data():
 
 @app.get("/")
 async def root():
-    return {"message": "Intelligence Document Analyzer API", "status": "operational", "version": "13.1.0",
-            "enhanced_features": ["perfect_extraction_logic", "post_processing_corrections",
-                                  "cross_contamination_fixes", "pattern_based_validation",
-                                  "100_percent_accuracy_system", "targeted_error_correction"]}
+    return {"message": "Intelligence Document Analyzer API", "status": "operational", "version": "16.0.1"}
 
 
 if __name__ == "__main__":
