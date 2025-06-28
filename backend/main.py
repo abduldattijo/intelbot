@@ -1,4 +1,4 @@
-# main.py - UPDATED VERSION WITH IMPROVED INCIDENT EXTRACTION
+# main.py - FINAL VERSION WITH WHITESPACE NORMALIZATION
 
 import os
 import uuid
@@ -31,7 +31,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Intelligence Document Analyzer API", version="22.0.0 (Validated Extraction)")
+app = FastAPI(title="Intelligence Document Analyzer API", version="24.1.0 (Final Extraction Fix)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # --- Global NLP Model & File Paths ---
@@ -168,326 +168,104 @@ class DocumentStore:
         cursor.close();
         logger.info("Database initialized successfully (including time_series table).")
 
-    # <<< UPDATED SECTION: IMPROVED HYBRID DATA EXTRACTION >>>
+    # <<< FINALIZED DYNAMIC EXTRACTION SECTION >>>
     def extract_and_store_incident_data(self, document_text: str):
         """
-        ULTRA-ROBUST: Multiple strategies to extract all monthly incident data
+        FINALIZED: Reliably extracts incident data by intelligently isolating the first paragraph
+        and normalizing whitespace for robust keyword matching.
         """
-        logger.info("Starting ULTRA-ROBUST hybrid data extraction for time series...")
+        logger.info("🧠 Starting DYNAMIC first-paragraph extraction...")
 
         month_map = {
             'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6,
             'july': 7, 'august': 8, 'september': 9, 'october': 10, 'november': 11, 'december': 12
         }
 
+        def extract_two_numbers_from_paragraph(paragraph: str):
+            """Extracts the first two valid incident numbers from a paragraph."""
+            number_pattern = r'\((\d{3,4})\)'  # Finds numbers like (632)
+            matches = re.findall(number_pattern, paragraph)
+
+            valid_numbers = []
+            for digit in matches:
+                count = int(digit)
+                if 400 <= count <= 1500:  # Valid incident range
+                    valid_numbers.append(count)
+
+            if len(valid_numbers) < 2:
+                logger.warning(f"Expected at least 2 numbers, found {len(valid_numbers)}")
+                return None, None
+
+            num1, num2 = valid_numbers[0], valid_numbers[1]
+
+            # --- FINAL FIX: NORMALIZE WHITESPACE ---
+            # This handles hidden newlines (e.g., "as\nagainst") from PDF extraction
+            normalized_paragraph = re.sub(r'\s+', ' ', paragraph.lower())
+
+            if 'as against' in normalized_paragraph:
+                return num1, num2  # Pattern is "[current] as against [previous]"
+            elif 'from' in normalized_paragraph and 'to' in normalized_paragraph:
+                return num2, num1  # Pattern is "from [previous] to [current]"
+            else:
+                logger.warning("Could not determine order from 'as against' or 'from...to'.")
+                return None, None
+
+        # --- Main Extraction Logic ---
         extracted_data = []
 
-        # Strategy 1: Split by multiple header patterns (more flexible)
-        splitting_patterns = [
-            # Handle variations in spacing and "THE MONTH OF"
-            r'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})',
-            r'ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})',
-            r'BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})',
-            r'ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})',
-            r'S\.1028/[^\n]*?FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})',
-            r'FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})'
-        ]
+        header_pattern = r'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})'
+        sections = re.split(header_pattern, document_text, flags=re.IGNORECASE)
 
-        report_sections = []
-        successful_pattern = None
-        for pattern in splitting_patterns:
-            report_sections = re.split(pattern, document_text, flags=re.IGNORECASE)
-            sections_found = (len(report_sections) - 1) // 3
-            logger.info(f"Pattern '{pattern}' found {sections_found} potential sections")
-            if sections_found >= 2:  # Need at least 2 months
-                successful_pattern = pattern
-                logger.info(f"Using pattern: {pattern}")
-                break
+        for i in range(1, len(sections), 3):
+            if i + 2 > len(sections): break
 
-        if not successful_pattern or len(report_sections) <= 3:
-            logger.warning(
-                f"Header-based splitting failed. Only found {(len(report_sections) - 1) // 3} sections. Trying manual section extraction...")
-            # Strategy 2: Manual extraction by searching for each month
-            self.extract_by_manual_search(document_text, month_map, extracted_data)
-        else:
-            # Strategy 1 worked: Process split sections
-            sections_found = (len(report_sections) - 1) // 3
-            logger.info(f"Processing {sections_found} monthly sections from splitting...")
+            month_str = sections[i].strip().lower()
+            year_str = sections[i + 1].strip()
+            section_content = sections[i + 2]
 
-            processed_months = set()  # Prevent duplicates
+            month_num = month_map.get(month_str)
+            if not month_num or year_str != '2020': continue
 
-            # Process in groups of 3 (month, year, content)
-            for i in range(1, len(report_sections), 3):
-                if i + 2 >= len(report_sections):
-                    break
+            # Intelligently isolate the first paragraph by finding the start of the second.
+            end_of_first_para_match = re.search(r'\s2\.', section_content)
 
-                month_str = report_sections[i].strip().lower()
-                year_str = report_sections[i + 1].strip()
-                section_content = report_sections[i + 2]
+            if end_of_first_para_match:
+                first_paragraph = section_content[:end_of_first_para_match.start()].strip()
+            else:
+                first_paragraph = section_content[:500].strip()  # Fallback
+                logger.warning(f"Could not find paragraph delimiter for {month_str}, using fallback slice.")
 
-                month = month_map.get(month_str)
-                if not month:
-                    logger.warning(f"Could not map month: {month_str}")
-                    continue
+            logger.info(f"Processing {month_str.title()}: Paragraph length = {len(first_paragraph)}")
 
-                if not year_str.isdigit():
-                    logger.warning(f"Invalid year: {year_str}")
-                    continue
+            current_count, previous_count = extract_two_numbers_from_paragraph(first_paragraph)
 
-                # Prevent duplicate processing
-                month_key = f"{month_str}_{year_str}"
-                if month_key in processed_months:
-                    logger.warning(f"Skipping duplicate {month_str.title()} {year_str}")
-                    continue
-                processed_months.add(month_key)
-
-                report_date = f"{year_str}-{month:02d}-01"
-
-                # Check if we already have this month in extracted_data
-                if any(existing[0] == report_date for existing in extracted_data):
-                    logger.warning(f"Already processed {month_str.title()} {year_str}, skipping")
-                    continue
-
-                logger.info(f"Processing section for {month_str.title()} {year_str}...")
-
-                # IMPROVED: More targeted incident extraction
-                incident_count = self.extract_incident_count_from_section(section_content, month_str, year_str)
-
-                if incident_count and incident_count > 0:
-                    extracted_data.append((report_date, incident_count))
-                    logger.info(f"  > ✅ Successfully extracted {month_str.title()}: {incident_count}")
-                else:
-                    logger.warning(f"  > ❌ Could not extract valid incident count for {report_date}")
-
-            # If we didn't find enough months from splitting, supplement with manual search
-            if len(extracted_data) < 8:  # Expected at least 8+ months
+            if current_count:
+                report_date = f"2020-{month_num:02d}-01"
+                extracted_data.append((report_date, current_count))
                 logger.info(
-                    f"Only found {len(extracted_data)} months from splitting. Supplementing with manual search...")
-                self.extract_by_manual_search(document_text, month_map, extracted_data)
+                    f"✅ Extracted for {month_str.title()}: {current_count} incidents (Previous: {previous_count})")
+            else:
+                logger.error(f"❌ Failed to extract data for {month_str.title()}")
 
-        if not extracted_data:
-            logger.warning("All extraction strategies failed, no time series data found.")
-            return
-
-        # Store the extracted data
-        cursor = self._conn.cursor()
-        try:
-            cursor.executemany(
-                "INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)",
-                extracted_data)
-            self._conn.commit()
-            logger.info(f"Successfully stored/updated {len(extracted_data)} records in incident_time_series table.")
-        except Exception as e:
-            logger.error(f"Error storing time series data: {e}")
-            self._conn.rollback()
-        finally:
-            cursor.close()
-
-    def extract_by_manual_search(self, document_text: str, month_map: dict, extracted_data: list):
-        """
-        Manual extraction strategy: Search for each month individually
-        """
-        logger.info("Using manual search strategy for each month...")
-
-        # Known incident counts for validation
-        known_counts = {
-            'january': 632, 'february': 578, 'march': 700, 'april': 568, 'may': 500, 'june': 505,
-            'july': 713, 'august': 645, 'november': 932, 'december': 736
-        }
-
-        for month_name, month_num in month_map.items():
-            logger.info(f"Searching for {month_name.title()} data...")
-
-            # Create multiple search patterns for this month
-            search_patterns = [
-                # Look for the full header followed by content
-                rf'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?{month_name.upper()}[,\s]*2020(.*?)(?=RETURNS ON ARMED BANDITRY|S\.1028/|$)',
-                rf'ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?{month_name.upper()}[,\s]*2020(.*?)(?=RETURNS ON ARMED BANDITRY|ARMED BANDITRY|S\.1028/|$)',
-                rf'ROBBERY\s*FOR (?:THE MONTH OF\s*)?{month_name.upper()}[,\s]*2020(.*?)(?=ROBBERY\s*FOR|S\.1028/|$)',
-                rf'FOR (?:THE MONTH OF\s*)?{month_name.upper()}[,\s]*2020(.*?)(?=FOR (?:THE MONTH OF\s*)?(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)|$)',
-                # Look for S.1028/ headers
-                rf'S\.1028/[^\n]*{month_name.upper()}[,\s]*2020(.*?)(?=S\.1028/|$)',
-                # Broader pattern
-                rf'{month_name.upper()}[,\s]*2020(.*?)(?=(?:JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)[,\s]*2020|$)'
-            ]
-
-            section_found = False
-            for i, pattern in enumerate(search_patterns):
-                try:
-                    matches = re.search(pattern, document_text, re.IGNORECASE | re.DOTALL)
-                    if matches:
-                        section_content = matches.group(1)
-                        # Must have substantial content (more than just whitespace)
-                        if len(section_content.strip()) > 100:
-                            logger.info(f"  > Found {month_name} section using pattern {i + 1}")
-
-                            incident_count = self.extract_incident_count_from_section(section_content, month_name,
-                                                                                      "2020")
-
-                            # Validate against known counts
-                            if incident_count > 0:
-                                if month_name in known_counts and incident_count == known_counts[month_name]:
-                                    logger.info(f"  > ✓ Validated {month_name}: {incident_count} (matches expected)")
-                                else:
-                                    logger.info(f"  > Extracted {month_name}: {incident_count}")
-
-                                report_date = f"2020-{month_num:02d}-01"
-                                # Check if we already have this month (avoid duplicates)
-                                if not any(existing[0] == report_date for existing in extracted_data):
-                                    extracted_data.append((report_date, incident_count))
-                                section_found = True
-                                break
-                except Exception as e:
-                    logger.warning(f"  > Pattern {i + 1} failed for {month_name}: {e}")
-                    continue
-
-            if not section_found:
-                # Try direct number search as last resort for known months
-                if month_name in known_counts:
-                    expected_count = known_counts[month_name]
-                    # Look for the exact number in context
-                    context_patterns = [
-                        rf'\b{expected_count}\b[^0-9]*?incidents',
-                        rf'total of[^0-9]*?{expected_count}[^0-9]*?incidents',
-                        rf'{expected_count}[^0-9]*?cases[^0-9]*?recorded'
-                    ]
-
-                    for pattern in context_patterns:
-                        if re.search(pattern, document_text, re.IGNORECASE):
-                            logger.info(f"  > Found {month_name} by direct number search: {expected_count}")
-                            report_date = f"2020-{month_num:02d}-01"
-                            # Check if we already have this month (avoid duplicates)
-                            if not any(existing[0] == report_date for existing in extracted_data):
-                                extracted_data.append((report_date, expected_count))
-                            section_found = True
-                            break
-
-                if not section_found:
-                    logger.warning(f"  > Could not find data for {month_name}")
-
-        logger.info(f"Manual search completed. Found {len(extracted_data)} months total.")
-
-    def extract_incident_count_from_section(self, section_content: str, month_str: str, year_str: str) -> int:
-        """
-        Extract incident count from a specific monthly section using multiple approaches
-        """
-
-        # Known correct values for validation
-        known_counts = {
-            'january': 632, 'february': 578, 'march': 700, 'april': 568, 'may': 500, 'june': 505,
-            'july': 713, 'august': 645, 'november': 932, 'december': 736
-        }
-
-        # Approach 1: Look for the main opening statement patterns (most reliable)
-        opening_patterns = [
-            # Main opening statement patterns - these are most accurate
-            r'witnessed[^0-9]*?(\d{3,4})[^0-9]*?incidents?',
-            r'recorded[^0-9]*?(\d{3,4})[^0-9]*?incidents?',
-            r'total of[^0-9]*?(\d{3,4})[^0-9]*?incidents?',
-            r'with[^0-9]*?about[^0-9]*?(\d{3,4})[^0-9]*?incidents?',
-            r'about[^0-9]*?(\d{3,4})[^0-9]*?incidents?[^0-9]*?(?:were )?recorded',
-            r'(\d{3,4})[^0-9]*?(?:criminal )?incidents?[^0-9]*?(?:were )?recorded',
-            r'(\d{3,4})[^0-9]*?cases?[^0-9]*?recorded',
-            r'from[^0-9]*?(\d{3,4})[^0-9]*?(?:cases|incidents)',
-            r'to[^0-9]*?(\d{3,4})[^0-9]*?(?:cases|incidents)'
-        ]
-
-        # Focus on the first few paragraphs where the main total is usually mentioned
-        first_section = section_content[:1500] if len(section_content) > 1500 else section_content
-
-        for pattern in opening_patterns:
-            matches = re.findall(pattern, first_section, re.IGNORECASE)
-            if matches:
-                for match in matches:
-                    try:
-                        count = int(match)
-                        if 400 <= count <= 1000:  # Reasonable range for monthly totals
-                            # Validate against known values if available
-                            if month_str.lower() in known_counts:
-                                expected = known_counts[month_str.lower()]
-                                if count == expected:
-                                    logger.info(
-                                        f"  > ✅ VALIDATED {month_str}: {count} using pattern '{pattern}' (matches expected)")
-                                    return count
-                                elif abs(count - expected) <= 50:  # Close enough
-                                    logger.info(
-                                        f"  > ⚠️ CLOSE MATCH {month_str}: {count} using pattern '{pattern}' (expected {expected})")
-                                    return count
-                                else:
-                                    logger.info(
-                                        f"  > ❌ REJECTED {month_str}: {count} using pattern '{pattern}' (expected {expected})")
-                                    continue
-                            else:
-                                logger.info(f"  > Found incident count using pattern '{pattern}': {count}")
-                                return count
-                    except (ValueError, IndexError):
-                        continue
-
-        # Approach 2: Look for written numbers with parenthetical digits (very reliable)
-        text_number_patterns = [
-            r'six hundred and thirty-two \((\d+)\)',
-            r'five hundred and seventy-eight \((\d+)\)',
-            r'seven hundred \((\d+)\)',
-            r'five hundred and sixty-eight \((\d+)\)',
-            r'five hundred \((\d+)\)',
-            r'five hundred and five \((\d+)\)',
-            r'seven hundred and thirteen \((\d+)\)',
-            r'six hundred and forty-five \((\d+)\)',
-            r'nine hundred and thirty-two \((\d+)\)',
-            r'seven hundred and thirty-six \((\d+)\)',
-            r'eight hundred and forty-four \((\d+)\)'
-        ]
-
-        for pattern in text_number_patterns:
-            match = re.search(pattern, first_section, re.IGNORECASE)
-            if match:
-                count = int(match.group(1))
-                logger.info(f"  > ✅ VALIDATED {month_str}: {count} using text pattern (highly reliable)")
-                return count
-
-        # Approach 3: If we know the expected value, search for it specifically
-        if month_str.lower() in known_counts:
-            expected_count = known_counts[month_str.lower()]
-
-            # Look for the exact expected number in context
-            exact_patterns = [
-                rf'\b{expected_count}\b[^0-9]*?incidents?',
-                rf'total of[^0-9]*?{expected_count}[^0-9]*?incidents?',
-                rf'{expected_count}[^0-9]*?cases?[^0-9]*?recorded',
-                rf'recorded[^0-9]*?{expected_count}[^0-9]*?incidents?',
-                rf'witnessed[^0-9]*?{expected_count}[^0-9]*?incidents?',
-                rf'about[^0-9]*?{expected_count}[^0-9]*?incidents?',
-                rf'with[^0-9]*?{expected_count}[^0-9]*?incidents?'
-            ]
-
-            for pattern in exact_patterns:
-                if re.search(pattern, section_content, re.IGNORECASE):  # Search full section for exact number
-                    logger.info(f"  > ✅ FOUND EXPECTED {month_str}: {expected_count} using exact search")
-                    return expected_count
-
-        # Approach 4: Fallback - look for any large number in reasonable range
-        all_numbers = re.findall(r'\b(\d{3,4})\b', first_section)
-        for num_str in all_numbers:
+        # Store in database
+        if extracted_data:
+            cursor = self._conn.cursor()
             try:
-                count = int(num_str)
-                if 400 <= count <= 1000:  # Must be in reasonable range
-                    if month_str.lower() in known_counts:
-                        expected = known_counts[month_str.lower()]
-                        if abs(count - expected) <= 100:  # Somewhat close
-                            logger.info(
-                                f"  > 🔍 FALLBACK {month_str}: {count} (expected {expected}, difference: {abs(count - expected)})")
-                            return count
-                    else:
-                        logger.info(f"  > 🔍 FALLBACK {month_str}: {count} (no validation available)")
-                        return count
-            except ValueError:
-                continue
-
-        logger.warning(f"  > ❌ Could not extract valid incident count for {month_str} {year_str}")
-        return 0
+                cursor.executemany(
+                    "INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)",
+                    extracted_data
+                )
+                self._conn.commit()
+                logger.info(f"✅ Successfully stored or updated {len(extracted_data)} months of incident data.")
+            except Exception as e:
+                logger.error(f"Database error during incident data storage: {e}")
+                self._conn.rollback()
+            finally:
+                cursor.close()
+        else:
+            logger.warning("No dynamic incident data was extracted!")
 
     def store_document(self, doc_id: str, filename: str, content: str, analysis: DocumentAnalysis):
-        # (The rest of the file is unchanged)
         cursor = self._conn.cursor()
         try:
             file_type = filename.split('.')[-1].lower() if '.' in filename else "unknown";
@@ -762,7 +540,7 @@ def on_startup():
         nlp = None
     app.state.analyzer = SimpleAnalyzer();
     app.state.rag_system = SimpleRAG(api_key, app.state.store);
-    logger.info("Intelligence Document Analyzer started with VALIDATED EXTRACTION mode.")
+    logger.info("Intelligence Document Analyzer started with DYNAMIC EXTRACTION mode.")
 
 
 def extract_text(file: UploadFile) -> str:
@@ -911,7 +689,8 @@ async def delete_document(doc_id: str):
 
 @app.get("/")
 async def root():
-    return {"message": "Intelligence Document Analyzer API", "status": "operational", "version": "22.0.0"}
+    return {"message": "Intelligence Document Analyzer API", "status": "operational",
+            "version": "24.1.0 (Final Extraction Fix)"}
 
 
 if __name__ == "__main__":
