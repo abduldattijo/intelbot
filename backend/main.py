@@ -1,4 +1,4 @@
-# main.py - FINAL VERSION WITH ALL CORRECTIONS AND AI-POWERED EXTRACTION
+# main.py - FINAL, ROBUST VERSION (Hybrid Regex + AI Extraction)
 
 import os
 import uuid
@@ -13,7 +13,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from io import BytesIO
 
 import pandas as pd
-from statsmodels.tsa.statespace.sarimax import SARIMAXResults
+import spacy
+from statsmodels.tsa.arima.model import ARIMAResults
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -30,11 +31,16 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Intelligence Document Analyzer API", version="16.0.1 (Live AI Forecast)")
+app = FastAPI(title="Intelligence Document Analyzer API", version="18.0.0 (Final)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# --- Global NLP Model & File Paths ---
+nlp = None
+DB_PATH = "documents.db"
+MODEL_PATH = "incident_forecaster.pkl"
 
-# --- Pydantic Models ---
+
+# --- Pydantic Models (No changes) ---
 class DocumentMetadata(BaseModel): filename: str; file_type: str; uploaded_at: str; file_size: int
 
 
@@ -84,38 +90,9 @@ Optional[int] = 0; timestamp: Optional[str] = None; model: Optional[str] = None;
     bool] = False; no_results: Optional[bool] = False
 
 
-# --- Global variable for the loaded forecasting model ---
-FORECAST_MODEL: Optional[SARIMAXResults] = None
-
-
-# --- AI-POWERED DATA EXTRACTION HELPER ---
-def extract_incidents_with_llm(report_text: str) -> Optional[int]:
-    try:
-        if not openai.api_key:
-            logger.error("OpenAI API key not configured. Cannot perform AI-powered data extraction.")
-            return None
-
-        truncated_text = report_text[:1200]
-        completion = openai.chat.completions.create(
-            model="gpt-3.5-turbo",
-            temperature=0.0,
-            messages=[
-                {"role": "system",
-                 "content": "You are a data extraction expert. Read the following text from a security report. Your task is to find the total number of incidents for the main month being discussed. Ignore any numbers from previous months mentioned in comparisons. Respond with ONLY the integer number and nothing else. For example: 568"},
-                {"role": "user", "content": truncated_text}
-            ]
-        )
-        response_text = completion.choices[0].message.content
-        cleaned_number = re.sub(r'\D', '', response_text)
-        return int(cleaned_number)
-    except Exception as e:
-        logger.error(f"LLM extraction failed: {e}")
-        return None
-
-
 # --- Database and Application Logic ---
 class DocumentStore:
-    def __init__(self, db_path: str = "documents.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self.db_path = db_path;
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False);
         self.init_database()
@@ -178,50 +155,103 @@ class DocumentStore:
                           )''');
         cursor.execute('''CREATE TABLE IF NOT EXISTS incident_time_series
                           (
-                              id
-                              INTEGER
-                              PRIMARY
-                              KEY
-                              AUTOINCREMENT,
                               report_date
                               DATE
-                              UNIQUE
-                              NOT
-                              NULL,
+                              PRIMARY
+                              KEY,
                               total_incidents
                               INTEGER
-                          )''');
+                              NOT
+                              NULL
+                          )''')
         self._conn.commit();
         cursor.close();
-        logger.info("Database initialized successfully")
+        logger.info("Database initialized successfully (including time_series table).")
 
-    def store_time_series_data(self, data: Dict):
+    # <<< REWRITTEN SECTION: ROBUST HYBRID (REGEX + AI) DATA EXTRACTION >>>
+    def extract_and_store_incident_data(self, document_text: str):
+        logger.info("Starting HYBRID data extraction for time series...")
+        report_sections = re.split(r'S\.1028/\s*\n', document_text)
+        if len(report_sections) <= 1:
+            logger.warning("Could not split document into monthly reports. Aborting time series extraction.")
+            return
+
+        client = openai.OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+        month_map = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                     'september': 9, 'october': 10, 'november': 11, 'december': 12}
+        extracted_data = []
+
+        system_prompt = """You are a data validation assistant. From the following list of candidate numbers, identify the one that represents the 'total number of criminal incidents' for the month mentioned in the provided text. Respond with ONLY that single, correct number. If none of the candidates are correct or the list is empty, respond with '0'."""
+
+        for section in report_sections[1:]:
+            date_match = re.search(r"FOR THE MONTH OF (\w+), (\d{4})", section, re.IGNORECASE)
+            if not date_match:
+                continue
+
+            month_str, year_str = date_match.groups()
+            month = month_map.get(month_str.lower())
+            if not month:
+                continue
+
+            report_date = f"{year_str}-{month:02d}-01"
+            logger.info(f"Processing section for {month_str.title()} {year_str}...")
+
+            # Step 1: Regex finds all 3-4 digit numbers in parentheses.
+            candidate_numbers = re.findall(r'\((\d{3,4})\)', section)
+
+            if not candidate_numbers:
+                logger.warning(f"  > No candidate numbers found for {report_date}. Skipping.")
+                continue
+
+            # Step 2: Ask the LLM to choose the correct number from the candidates.
+            user_prompt = f"Text: \"{section[:1000]}\" \n\nCandidate Numbers: {candidate_numbers}"
+
+            try:
+                response = client.chat.completions.create(
+                    model="phi3",
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    temperature=0.0
+                )
+
+                response_text = response.choices[0].message.content.strip()
+                match = re.search(r'\d+', response_text)
+
+                if match:
+                    incidents = int(match.group(0))
+                    if incidents == 0:
+                        logger.warning(f"  > LLM could not validate a correct number for {report_date}. Skipping.")
+                        continue
+                    extracted_data.append((report_date, incidents))
+                    logger.info(f"  > AI Validated Incident Count: {incidents}")
+                else:
+                    logger.warning(
+                        f"  > LLM response did not contain a valid number for {report_date}. Response: '{response_text}'")
+
+            except Exception as e:
+                logger.error(f"  > Failed to extract/validate incident count for {report_date}: {e}")
+
+        if not extracted_data:
+            logger.warning("Hybrid extraction finished, but no new time series data was found.")
+            return
+
         cursor = self._conn.cursor()
         try:
-            cursor.execute(
-                '''INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)''',
-                (data['report_date'], data.get('total_incidents', 0)));
-            self._conn.commit();
-            logger.info(
-                f"Stored time-series data for date {data['report_date']} with {data['total_incidents']} incidents.")
+            cursor.executemany(
+                "INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)",
+                extracted_data)
+            self._conn.commit()
+            logger.info(f"Successfully stored/updated {len(extracted_data)} records in incident_time_series table.")
         except Exception as e:
-            logger.error(f"Error storing time-series data: {e}"); self._conn.rollback()
+            logger.error(f"Error storing time series data: {e}")
+            self._conn.rollback()
         finally:
             cursor.close()
 
-    def get_all_time_series_data(self) -> pd.DataFrame:
-        try:
-            conn = sqlite3.connect(self.db_path);
-            df = pd.read_sql_query(
-                "SELECT report_date, total_incidents FROM incident_time_series ORDER BY report_date ASC", conn);
-            conn.close();
-            df['report_date'] = pd.to_datetime(df['report_date']);
-            df.set_index('report_date', inplace=True);
-            return df
-        except Exception as e:
-            logger.error(f"Could not fetch time-series data: {e}"); return pd.DataFrame()
-
     def store_document(self, doc_id: str, filename: str, content: str, analysis: DocumentAnalysis):
+        # (The rest of the file is unchanged)
         cursor = self._conn.cursor()
         try:
             file_type = filename.split('.')[-1].lower() if '.' in filename else "unknown";
@@ -233,7 +263,8 @@ class DocumentStore:
             self._conn.commit();
             logger.info(f"Document {filename} stored successfully")
         except Exception as e:
-            logger.error(f"Error storing document: {e}"); self._conn.rollback()
+            logger.error(f"Error storing document: {e}");
+            self._conn.rollback()
         finally:
             cursor.close()
 
@@ -247,7 +278,8 @@ class DocumentStore:
             self._conn.commit();
             logger.info(f"Successfully stored {len(chunks)} chunks")
         except Exception as e:
-            logger.error(f"Error storing chunks: {e}"); self._conn.rollback()
+            logger.error(f"Error storing chunks: {e}");
+            self._conn.rollback()
         finally:
             cursor.close()
 
@@ -258,7 +290,8 @@ class DocumentStore:
             result = cursor.fetchone()
             return {'filename': result[0], 'text': result[1]} if result else None
         except Exception as e:
-            logger.error(f"Error getting chunk: {e}"); return None
+            logger.error(f"Error getting chunk: {e}");
+            return None
         finally:
             cursor.close()
 
@@ -272,7 +305,8 @@ class DocumentStore:
                      "intelligence_summary": row[4] or f"Analysis for {row[1]}",
                      "processed_at": row[5] or datetime.now().isoformat()} for row in results]
         except Exception as e:
-            logger.error(f"Error getting documents: {e}"); return []
+            logger.error(f"Error getting documents: {e}");
+            return []
         finally:
             cursor.close()
 
@@ -286,8 +320,9 @@ class DocumentStore:
             return {"total_chunks": total_chunks, "total_documents": total_documents, "index_dimension": 384,
                     "model_name": "all-MiniLM-L6-v2"}
         except Exception as e:
-            logger.error(f"Error getting stats: {e}"); return {"total_chunks": 0, "total_documents": 0,
-                                                               "index_dimension": 384, "model_name": "all-MiniLM-L6-v2"}
+            logger.error(f"Error getting stats: {e}");
+            return {"total_chunks": 0, "total_documents": 0,
+                    "index_dimension": 384, "model_name": "all-MiniLM-L6-v2"}
         finally:
             cursor.close()
 
@@ -300,7 +335,9 @@ class DocumentStore:
             logger.info(f"Successfully deleted document {doc_id} and associated chunks.")
             return cursor.rowcount > 0
         except Exception as e:
-            logger.error(f"Error deleting document {doc_id}: {e}"); self._conn.rollback(); return False
+            logger.error(f"Error deleting document {doc_id}: {e}");
+            self._conn.rollback();
+            return False
         finally:
             cursor.close()
 
@@ -318,75 +355,89 @@ class DocumentStore:
             return AnalyzedDocument(id=doc_id, content=content, metadata=metadata,
                                     analysis=DocumentAnalysis(**analysis_data))
         except Exception as e:
-            logger.error(f"Error fetching document {doc_id}: {e}"); return None
+            logger.error(f"Error fetching document {doc_id}: {e}");
+            return None
         finally:
             cursor.close()
 
 
 class SimpleAnalyzer:
     def analyze_document(self, text: str, metadata: DocumentMetadata) -> DocumentAnalysis:
-        start_time = time.time();
-        words = text.split() if text else [];
-        sentences = text.split('.') if text else [];
-        paragraphs = text.split('\n\n') if text else []
+        global nlp
+        if nlp is None: raise RuntimeError("SpaCy NLP model not loaded. Check startup logs.")
+        start_time = time.time()
+        doc = nlp(text)
+        words = [token.text for token in doc if not token.is_punct and not token.is_space]
+        sentences = list(doc.sents)
         text_statistics = TextStatistics(word_count=len(words), sentence_count=len(sentences),
-                                         paragraph_count=len([p for p in paragraphs if p.strip()]),
-                                         readability_score=50.0, language="en")
-        text_lower = text.lower();
+                                         paragraph_count=len(text.split('\n\n')), language=doc.lang_)
+        entities = {"persons": set(), "organizations": set(), "locations": set(), "dates": set(), "weapons": set(),
+                    "vehicles": set()}
+        for ent in doc.ents:
+            if ent.label_ == "PERSON":
+                if len(ent.text.strip().split()) > 1: entities["persons"].add(ent.text.strip())
+            elif ent.label_ == "ORG":
+                if ent.text.lower() not in ['the service', 'the federal government', 'security agencies']: entities[
+                    "organizations"].add(ent.text.strip())
+            elif ent.label_ in ["GPE", "LOC"]:
+                entities["locations"].add(ent.text.strip())
+            elif ent.label_ == "DATE":
+                if not any(day in ent.text.lower() for day in ['month', 'period', 'daily', 'the month']):
+                    entities["dates"].add(ent.text.strip())
+        text_lower = text.lower()
+        weapon_keywords = {'ak 47', 'ak47', 'rifles', 'pistols', 'guns', 'bomb', 'explosive', 'ammunition',
+                           'pump action', 'cartridges', 'ieds'}
+        for keyword in weapon_keywords:
+            if keyword in text_lower: entities["weapons"].add(keyword.upper())
+        vehicle_keywords = {'car', 'vehicle', 'truck', 'motorcycle', 'bike', 'van'}
+        for keyword in vehicle_keywords:
+            if keyword in text_lower: entities["vehicles"].add(keyword)
+        nigerian_states = {'lagos', 'abuja', 'kano', 'kaduna', 'rivers', 'oyo', 'delta', 'anambra', 'edo', 'plateau',
+                           'cross river', 'ogun', 'kwara', 'imo', 'ondo', 'akwa ibom', 'osun', 'borno', 'bauchi',
+                           'enugu', 'kebbi', 'sokoto', 'adamawa', 'katsina', 'bayelsa', 'niger', 'jigawa', 'gombe',
+                           'ekiti', 'abia', 'ebonyi', 'taraba', 'zamfara', 'nasarawa', 'kogi', 'yobe', 'benue'}
+        found_states = {loc for loc in entities["locations"] if loc.lower() in nigerian_states}
+        zones = re.findall(r'(North-West|North-Central|South-South|South-East|North-East|South-West)\s+zone', text,
+                           re.IGNORECASE)
+        other_locations = set(zones)
+        geographic_intel = GeographicIntelligence(states=list(found_states), cities=[],
+                                                  countries=["Nigeria"] if found_states or zones else [],
+                                                  total_locations=len(entities["locations"]),
+                                                  other_locations=list(other_locations))
+        theft_count = text_lower.count('theft') + text_lower.count('robbery') + text_lower.count('steal')
+        kidnap_count = text_lower.count('kidnap') + text_lower.count('abduct')
+        homicide_count = text_lower.count('murder') + text_lower.count('kill') + text_lower.count('assassin')
+        fraud_count = text_lower.count('fraud') + text_lower.count('scam')
+        crime_types = []
+        if theft_count > 0: crime_types.append(("Theft/Robbery", theft_count))
+        if kidnap_count > 0: crime_types.append(("Kidnapping", kidnap_count))
+        if homicide_count > 0: crime_types.append(("Homicide", homicide_count))
+        if fraud_count > 0: crime_types.append(("Fraud", fraud_count))
+        crime_patterns = CrimePatterns(primary_crimes=crime_types,
+                                       crime_frequency={crime: count for crime, count in crime_types})
         sentiment_analysis = SentimentAnalysis()
         if any(word in text_lower for word in
                ['attack', 'bomb', 'terror', 'kill', 'murder', 'assassination', 'explosive']):
-            sentiment_analysis.threat_level = "High"; sentiment_analysis.sentiment_score = -0.8; sentiment_analysis.urgency_indicators = [
-                "violent_keywords_detected"]
+            sentiment_analysis.threat_level = "High";
+            sentiment_analysis.sentiment_score = -0.8;
         elif any(word in text_lower for word in ['robbery', 'theft', 'crime', 'violence', 'kidnap', 'fraud']):
-            sentiment_analysis.threat_level = "Medium"; sentiment_analysis.sentiment_score = -0.4; sentiment_analysis.urgency_indicators = [
-                "criminal_activity_mentioned"]
-        else:
-            sentiment_analysis.threat_level = "Low"; sentiment_analysis.sentiment_score = 0.1
-        nigerian_states = ['lagos', 'abuja', 'kano', 'kaduna', 'rivers', 'oyo', 'delta', 'anambra', 'edo', 'plateau',
-                           'cross river', 'ogun', 'kwara', 'imo', 'ondo', 'akwa ibom', 'osun', 'borno', 'bauchi',
-                           'enugu', 'kebbi', 'sokoto', 'adamawa', 'katsina', 'bayelsa', 'niger', 'jigawa', 'gombe',
-                           'ekiti', 'abia', 'ebonyi', 'taraba', 'zamfara', 'nasarawa', 'kogi', 'yobe', 'benue']
-        found_states = [state for state in nigerian_states if state in text_lower]
-        other_locations = [word for word in words if any(keyword in word.lower() for keyword in
-                                                         ['area', 'zone', 'district', 'region', 'community', 'village',
-                                                          'town', 'city', 'street', 'road']) and len(word) > 3]
-        geographic_intel = GeographicIntelligence(states=found_states, cities=[],
-                                                  countries=["Nigeria"] if found_states else [], coordinates=[],
-                                                  total_locations=len(found_states) + len(set(other_locations)),
-                                                  other_locations=list(set(other_locations[:10])))
-        entities = {"persons": [], "organizations": [], "locations": found_states + list(set(other_locations[:5])),
-                    "weapons": [], "vehicles": [], "dates": []}
-        for word in words:
-            word_lower = word.lower()
-            if any(w in word_lower for w in ['gun', 'rifle', 'pistol', 'ak', 'bomb', 'explosive', 'ammunition']):
-                entities["weapons"].append(word)
-            elif any(v in word_lower for v in ['car', 'vehicle', 'truck', 'motorcycle', 'bike', 'van']):
-                entities["vehicles"].append(word)
-            elif any(o in word_lower for o in ['police', 'army', 'military', 'government', 'agency', 'force']):
-                entities["organizations"].append(word)
-        crime_types = []
-        if any(w in text_lower for w in ['robbery', 'theft', 'steal']): crime_types.append(("theft", 1))
-        if any(w in text_lower for w in ['kidnap', 'abduct']): crime_types.append(("kidnapping", 1))
-        if any(w in text_lower for w in ['murder', 'kill', 'assassin']): crime_types.append(("homicide", 1))
-        if any(w in text_lower for w in ['fraud', 'scam']): crime_types.append(("fraud", 1))
-        crime_patterns = CrimePatterns(primary_crimes=crime_types,
-                                       crime_frequency={c: count for c, count in crime_types}, crime_trends=[])
+            sentiment_analysis.threat_level = "Medium";
+            sentiment_analysis.sentiment_score = -0.4;
         processing_time = time.time() - start_time
-        intelligence_summary = f"""Intelligence analysis of {metadata.filename} completed. Document contains {len(words)} words with {sentiment_analysis.threat_level} threat level. Geographic analysis identified {len(found_states)} Nigerian states: {', '.join(found_states[:3])}{'...' if len(found_states) > 3 else ''}. Security assessment: {len(entities['weapons'])} weapons mentioned, {len(crime_types)} crime types detected. Processing completed in {processing_time:.2f} seconds with {getattr(text_statistics, 'confidence', 75)}% confidence."""
-        return DocumentAnalysis(document_classification=DocumentClassification(), entities=entities,
+        intelligence_summary = f"NLP analysis of {metadata.filename} complete. Threat level assessed as {sentiment_analysis.threat_level}. Identified {len(entities['persons'])} persons, {len(entities['organizations'])} organizations, and {len(entities['locations'])} locations. Detected {len(crime_patterns.primary_crimes)} primary crime patterns."
+        final_entities = {key: sorted(list(value)) for key, value in entities.items()}
+        return DocumentAnalysis(document_classification=DocumentClassification(), entities=final_entities,
                                 sentiment_analysis=sentiment_analysis, geographic_intelligence=geographic_intel,
                                 temporal_intelligence=TemporalIntelligence(),
                                 numerical_intelligence=NumericalIntelligence(), crime_patterns=crime_patterns,
                                 relationships=[], text_statistics=text_statistics,
-                                intelligence_summary=intelligence_summary, confidence_score=0.75,
+                                intelligence_summary=intelligence_summary, confidence_score=0.85,
                                 processing_time=processing_time)
 
 
 class SimpleRAG:
     def __init__(self, openai_api_key: str, store: DocumentStore):
         self.openai_api_key = openai_api_key;
-        if openai_api_key and openai_api_key != "fake-key": openai.api_key = openai_api_key
         self.store = store;
         self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2');
         self.index_path = "faiss_index.bin";
@@ -427,8 +478,9 @@ class SimpleRAG:
 
     def query(self, query_text: str, k: int = 5) -> Dict:
         try:
-            if self.index.ntotal == 0: return {"response": "No documents in knowledge base.", "sources": [],
-                                               "no_results": True}
+            if self.index.ntotal == 0: return {
+                "response": "No documents in knowledge base. Please upload a document first.", "sources": [],
+                "no_results": True}
             query_embedding = self.embedding_model.encode([query_text]);
             faiss.normalize_L2(query_embedding);
             similarities, indices = self.index.search(query_embedding.astype('float32'), min(k, self.index.ntotal))
@@ -436,55 +488,52 @@ class SimpleRAG:
             for idx, similarity in zip(indices[0], similarities[0]):
                 if idx == -1: break
                 chunk = self.store.get_chunk_by_embedding_id(int(idx))
-                if chunk: chunk['similarity'] = float(similarity); chunk['rank'] = len(retrieved) + 1; retrieved.append(
-                    chunk)
-            if not retrieved: return {"response": "No relevant information found.", "sources": [], "no_results": True}
+                if chunk:
+                    chunk['similarity'] = float(similarity)
+                    chunk['rank'] = len(retrieved) + 1
+                    retrieved.append(chunk)
+            if not retrieved: return {
+                "response": "Could not find any relevant information in the documents to answer your query.",
+                "sources": [], "no_results": True}
             context = "\n\n---\n\n".join([f"Source: {c['filename']}\n{c['text']}" for c in retrieved])
-            if not self.openai_api_key or self.openai_api_key == "fake-key": return {
-                "response": f"Found {len(retrieved)} sources, but OpenAI API key is missing.",
-                "sources": [{"filename": c['filename'], "similarity": c['similarity'], "rank": c['rank']} for c in
-                            retrieved]}
-            response = openai.chat.completions.create(model="gpt-3.5-turbo", messages=[
-                {"role": "system", "content": "You are an AI intelligence analyst. Answer based on provided sources."},
-                {"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION: {query_text}\n\nANSWER:"}],
-                                                      max_tokens=1000, temperature=0.3)
+            client = openai.OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+            response = client.chat.completions.create(model="phi3", messages=[{"role": "system",
+                                                                               "content": "You are an AI intelligence analyst. Answer the question based *only* on the provided sources. Cite the source filename for any information you use."},
+                                                                              {"role": "user",
+                                                                               "content": f"CONTEXT:\n{context}\n\nQUESTION: {query_text}\n\nANSWER:"}],
+                                                      max_tokens=1000, temperature=0.1)
             return {"response": response.choices[0].message.content,
                     "sources": [{"filename": c['filename'], "similarity": c['similarity'], "rank": c['rank']} for c in
                                 retrieved], "context_chunks": len(retrieved), "timestamp": datetime.now().isoformat(),
-                    "model": "gpt-3.5-turbo"}
+                    "model": "phi3"}
         except Exception as e:
-            logger.error(f"Query error: {e}"); return {"response": f"Error processing query: {str(e)}", "sources": [],
-                                                       "error": True}
+            logger.error(f"Query error: {e}");
+            return {"response": f"An error occurred while processing the query with the local model: {str(e)}",
+                    "sources": [], "error": True}
 
 
 @app.on_event("startup")
 def on_startup():
-    global FORECAST_MODEL
-    api_key = os.getenv("OPENAI_API_KEY");
-    if not api_key:
-        logger.warning("OPENAI_API_KEY not set. RAG queries and AI extraction will fail.")
-    else:
-        openai.api_key = api_key
+    global nlp
+    api_key = os.getenv("OPENAI_API_KEY", "self-hosted");
+    openai.api_key = api_key
     app.state.store = DocumentStore();
-    app.state.analyzer = SimpleAnalyzer();
-    app.state.rag_system = SimpleRAG(api_key or "fake-key", app.state.store);
-    logger.info("Intelligence Document Analyzer started")
     try:
-        with open('incident_forecaster.pkl', 'rb') as pkl_file:
-            FORECAST_MODEL = pickle.load(pkl_file)
-        logger.info("Successfully loaded forecasting model.")
-    except FileNotFoundError:
-        logger.warning("Forecasting model 'incident_forecaster.pkl' not found. Run train_model.py to create it.")
-    except Exception as e:
-        logger.error(f"Error loading forecasting model: {e}")
+        nlp = spacy.load("en_core_web_sm")
+        logger.info("SpaCy NLP model 'en_core_web_sm' loaded successfully.")
+    except OSError:
+        logger.error("SpaCy model 'en_core_web_sm' not found. Please run 'python -m spacy download en_core_web_sm'")
+        nlp = None
+    app.state.analyzer = SimpleAnalyzer();
+    app.state.rag_system = SimpleRAG(api_key, app.state.store);
+    logger.info("Intelligence Document Analyzer started in SELF-HOSTED, AI-EXTRACTION mode.")
 
 
 def extract_text(file: UploadFile) -> str:
     ext = file.filename.lower().split('.')[-1];
-    content = file.file.read()
-    if ext == 'pdf': return "".join(page.extract_text() for page in PyPDF2.PdfReader(BytesIO(content)).pages)
-    if ext == 'docx': return "\n".join(p.text for p in docx.Document(BytesIO(content)).paragraphs)
-    if ext == 'txt': return content.decode('utf-8', errors='ignore')
+    if ext == 'pdf': return "".join(page.extract_text() for page in PyPDF2.PdfReader(file.file).pages)
+    if ext == 'docx': return "\n".join(p.text for p in docx.Document(file.file).paragraphs)
+    if ext == 'txt': return file.file.read().decode('utf-8', errors='ignore')
     raise HTTPException(400, "Unsupported file type")
 
 
@@ -492,41 +541,82 @@ def extract_text(file: UploadFile) -> str:
 @app.post("/upload-document", response_model=AnalyzedDocument)
 async def handle_upload(file: UploadFile = File(...)):
     try:
+        content_bytes = await file.read()
+        await file.seek(0)
         text = extract_text(file)
+
         if not text.strip(): raise HTTPException(400, "Document is empty")
 
-        report_delimiter = "RETURNS ON ARMED BANDITRY/"
-        report_sections = text.split(report_delimiter)
-
-        num_reports_found = 0
-        for section in report_sections[1:]:
-            full_report_text = report_delimiter + section
-
-            date_match = re.search(r"FOR (?:THE MONTH OF )?(\w+),?\s*(\d{4})", full_report_text, re.IGNORECASE)
-            if not date_match: continue
-
-            month, year = date_match.groups()
-
-            incidents = extract_incidents_with_llm(full_report_text)
-
-            if incidents:
-                report_date = datetime.strptime(f"1 {month} {year}", "%d %B %Y").strftime("%Y-%m-%d")
-                time_series_entry = {"report_date": report_date, "total_incidents": incidents}
-                app.state.store.store_time_series_data(time_series_entry)
-                num_reports_found += 1
-
-        logger.info(f"Found and processed {num_reports_found} monthly reports using AI extraction.")
+        app.state.store.extract_and_store_incident_data(text)
 
         doc_id = str(uuid.uuid4());
         metadata = DocumentMetadata(filename=file.filename, file_type=file.filename.split('.')[-1].lower(),
-                                    uploaded_at=datetime.now().isoformat(), file_size=len(text))
+                                    uploaded_at=datetime.now().isoformat(), file_size=len(content_bytes))
         analysis = app.state.analyzer.analyze_document(text, metadata)
         app.state.store.store_document(doc_id, file.filename, text, analysis);
         app.state.rag_system.add_document(doc_id, file.filename, text)
         return AnalyzedDocument(id=doc_id, content=text[:2000] + "..." if len(text) > 2000 else text, metadata=metadata,
                                 analysis=analysis)
     except Exception as e:
-        logger.error(f"Upload failed: {e}"); raise HTTPException(500, f"Upload error: {e}")
+        logger.error(f"Upload failed: {e}");
+        raise HTTPException(500, f"Upload error: {e}")
+
+
+@app.get("/forecast")
+async def get_forecast_data():
+    if not os.path.exists(MODEL_PATH):
+        raise HTTPException(status_code=404, detail=f"Forecasting model not found. Please run train_model.py first.")
+
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        df = pd.read_sql_query("SELECT report_date, total_incidents FROM incident_time_series ORDER BY report_date ASC",
+                               conn, parse_dates=['report_date'])
+        conn.close()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to load historical data from database: {e}")
+
+    if df.empty or len(df) < 2:
+        raise HTTPException(status_code=404, detail="Not enough historical incident data found to generate a forecast.")
+
+    df.set_index('report_date', inplace=True)
+    df = df.asfreq('MS')
+    df['total_incidents'] = df['total_incidents'].interpolate()
+
+    with open(MODEL_PATH, 'rb') as pkl_file:
+        trained_model: ARIMAResults = pickle.load(pkl_file)
+
+    forecast_steps = 6
+    forecast_result = trained_model.get_forecast(steps=forecast_steps)
+    forecast_df = forecast_result.summary_frame()
+
+    forecast_data = []
+    for date, row in df.iterrows():
+        forecast_data.append(
+            {"date": date.strftime('%Y-%m-%d'), "incidents": int(row["total_incidents"]), "predicted_incidents": None})
+
+    if forecast_data:
+        last_actual_value = forecast_data[-1]["incidents"]
+        forecast_data[-1]["predicted_incidents"] = int(last_actual_value)
+
+    for date, row in forecast_df.iterrows():
+        forecast_data.append(
+            {"date": date.strftime('%Y-%m-%d'), "incidents": None, "predicted_incidents": int(row['mean'])})
+
+    latest_actual = df['total_incidents'].iloc[-1]
+    second_latest_actual = df['total_incidents'].iloc[-2]
+    predicted_change = ((
+                                    latest_actual - second_latest_actual) / second_latest_actual) * 100 if second_latest_actual > 0 else 0
+    current_threat_level = min(99, (latest_actual / 1000) * 100)
+
+    threat_metrics = {
+        "current_threat_level": current_threat_level,
+        "predicted_change": round(predicted_change, 1),
+        "confidence_score": 85.0,
+        "risk_factors": ["High incident volatility month-to-month", "Proliferation of small arms"],
+        "recommendations": ["Increase surveillance in high-incident states", "Sustain social intervention programs."]
+    }
+
+    return {"forecastData": forecast_data, "threatMetrics": threat_metrics}
 
 
 @app.post("/query", response_model=QueryResponse)
@@ -536,8 +626,9 @@ async def handle_query(request: QueryRequest):
         result['query'] = request.query
         return result
     except Exception as e:
-        logger.error(f"Query error: {e}"); return QueryResponse(response=f"Query error: {str(e)}", sources=[],
-                                                                error=True)
+        logger.error(f"Query error: {e}");
+        return QueryResponse(response=f"Query error: {str(e)}", sources=[],
+                             error=True)
 
 
 @app.get("/rag-stats")
@@ -545,7 +636,8 @@ async def get_rag_stats():
     try:
         return app.state.store.get_rag_stats()
     except Exception as e:
-        logger.error(f"Stats error: {e}"); return {"total_chunks": 0, "total_documents": 0}
+        logger.error(f"Stats error: {e}");
+        return {"total_chunks": 0, "total_documents": 0}
 
 
 @app.get("/document-list")
@@ -553,7 +645,8 @@ async def get_document_list():
     try:
         return {"documents": app.state.store.get_all_documents()}
     except Exception as e:
-        logger.error(f"Document list error: {e}"); return {"documents": []}
+        logger.error(f"Document list error: {e}");
+        return {"documents": []}
 
 
 @app.get("/document/{doc_id}", response_model=AnalyzedDocument)
@@ -563,8 +656,9 @@ async def get_document(doc_id: str):
         if document is None: raise HTTPException(status_code=404, detail="Document not found.")
         return document
     except Exception as e:
-        logger.error(f"Error fetching document {doc_id}: {e}"); raise HTTPException(status_code=500,
-                                                                                    detail=f"Internal server error: {e}")
+        logger.error(f"Error fetching document {doc_id}: {e}");
+        raise HTTPException(status_code=500,
+                            detail=f"Internal server error: {e}")
 
 
 @app.delete("/document/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -574,58 +668,14 @@ async def delete_document(doc_id: str):
         if not success: raise HTTPException(status_code=404, detail="Document not found.")
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     except Exception as e:
-        logger.error(f"Error deleting document {doc_id}: {e}"); raise HTTPException(status_code=500,
-                                                                                    detail=f"Internal server error: {e}")
-
-
-@app.get("/forecast")
-async def get_forecast_data():
-    if FORECAST_MODEL is None: raise HTTPException(status_code=503,
-                                                   detail="Forecasting model is not available. Please train the model by running train_model.py.")
-    historical_df = app.state.store.get_all_time_series_data()
-    if historical_df.empty: raise HTTPException(status_code=404,
-                                                detail="No historical data found to generate a forecast. Please upload documents first.")
-
-    historical_df = historical_df.asfreq('MS')['total_incidents'].interpolate()
-    forecast_result = FORECAST_MODEL.get_forecast(steps=6)
-
-    forecast_data = []
-    for date, incidents in historical_df.items(): forecast_data.append(
-        {"date": date.strftime('%Y-%m-%d'), "incidents": int(incidents), "predicted_incidents": None})
-
-    if forecast_data:
-        last_actual = forecast_data[-1]
-        if last_actual["predicted_incidents"] is None: last_actual["predicted_incidents"] = last_actual["incidents"]
-
-    for date, pred_incidents in forecast_result.predicted_mean.items(): forecast_data.append(
-        {"date": date.strftime('%Y-%m-%d'), "incidents": None, "predicted_incidents": int(pred_incidents)})
-
-    if len(historical_df) >= 2:
-        latest_actual = historical_df.iloc[-1];
-        second_latest_actual = historical_df.iloc[-2]
-        change = ((
-                              latest_actual - second_latest_actual) / second_latest_actual) * 100 if second_latest_actual > 0 else 0
-        current_threat_level = min(99, (latest_actual / 1000) * 100)
-    else:
-        change = 0;
-        current_threat_level = 0
-
-    threat_metrics = {
-        "current_threat_level": current_threat_level,
-        "predicted_change": round(change, 1),
-        "confidence_score": 94.2,
-        "risk_factors": ["Ongoing proliferation of small arms", "High unemployment rates",
-                         "Porous borders enabling criminal movement."],
-        "recommendations": ["Increase surveillance in high-incident states",
-                            "Sustain social intervention programs to address root causes.",
-                            "Enhance inter-agency intelligence sharing."]
-    }
-    return {"forecastData": forecast_data, "threatMetrics": threat_metrics}
+        logger.error(f"Error deleting document {doc_id}: {e}");
+        raise HTTPException(status_code=500,
+                            detail=f"Internal server error: {e}")
 
 
 @app.get("/")
 async def root():
-    return {"message": "Intelligence Document Analyzer API", "status": "operational", "version": "16.0.1"}
+    return {"message": "Intelligence Document Analyzer API", "status": "operational", "version": "18.0.0"}
 
 
 if __name__ == "__main__":

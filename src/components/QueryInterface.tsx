@@ -1,7 +1,8 @@
-// src/components/QueryInterface.tsx - Enhanced RAG-powered Query Interface (FIXED)
+// src/components/QueryInterface.tsx - FINAL VERSION WITH TABLE SUPPORT
 
 import React, { useState, useEffect } from 'react';
-import ReactMarkdown from 'react-markdown'; // <--- IMPORT THE LIBRARY
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm'; // <-- 1. IMPORT THE PLUGIN
 import { Search, Brain, Loader2, AlertCircle, FileText, MessageSquare, Lightbulb, Database, TrendingUp, Users, MapPin, Clock, CheckCircle, XCircle } from 'lucide-react';
 
 interface QuerySource {
@@ -43,11 +44,11 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
   const intelligenceQueries = [
     "What are the main security threats mentioned in the documents?",
     "Summarize the geographic locations and their threat levels",
-    "What criminal activities are most frequently referenced?",
+    "What criminal activities are most frequently referenced? make the response in a table form",
     "Identify key persons and organizations mentioned",
     "What are the temporal patterns in the incidents?",
     "Provide a risk assessment based on the analyzed documents",
-    "What weapons or equipment are mentioned in the intelligence reports?",
+    "What weapons or equipment are mentioned in the intelligence reports? make it a table",
     "Summarize incidents by Nigerian states and regions",
     "What are the coordination patterns between criminal groups?",
     "Analyze the threat evolution over time periods mentioned"
@@ -96,7 +97,6 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
       const data: QueryResponse = await response.json();
       setQueryResponse(data);
 
-      // Call parent callback if provided
       if (onQueryResponse) {
         onQueryResponse(data);
       }
@@ -120,11 +120,6 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
     setQueryResponse(null);
     setError(null);
   };
-
-  // THIS FUNCTION IS NO LONGER NEEDED AND CAN BE REMOVED
-  /*
-  const formatResponse = (response: string) => { ... };
-  */
 
   const getSimilarityColor = (similarity: number) => {
     if (similarity >= 0.8) return 'text-green-600 bg-green-50';
@@ -298,7 +293,6 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
       {/* Query Response */}
       {queryResponse && (
         <div className="space-y-6">
-          {/* Main Response */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900 flex items-center">
@@ -320,14 +314,15 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
               </div>
             ) : (
               <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                {/* FIX: Use the ReactMarkdown component here */}
                 <div className="prose prose-gray max-w-none">
-                  <ReactMarkdown>{queryResponse.response}</ReactMarkdown>
+                  {/* 2. USE THE PLUGIN IN THE COMPONENT */}
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {queryResponse.response}
+                  </ReactMarkdown>
                 </div>
               </div>
             )}
 
-            {/* Query Metadata */}
             <div className="mt-4 pt-4 border-t border-gray-200">
               <div className="flex flex-wrap items-center gap-4 text-sm text-gray-600">
                 <div className="flex items-center">
@@ -349,14 +344,12 @@ const QueryInterface: React.FC<QueryInterfaceProps> = ({ onQueryResponse }) => {
             </div>
           </div>
 
-          {/* Source Documents */}
           {queryResponse.sources && queryResponse.sources.length > 0 && (
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
                 <FileText className="h-5 w-5 text-blue-600 mr-2" />
                 Source Documents ({queryResponse.sources.length})
               </h3>
-
               <div className="space-y-3">
                 {queryResponse.sources.map((source, index) => (
                   <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
