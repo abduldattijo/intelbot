@@ -1,4 +1,4 @@
-# main.py - FINAL COMPLETE VERSION (Query Interface Fixed)
+# main.py - FINAL COMPLETE VERSION - All Features & Fixes
 
 import os
 import uuid
@@ -10,6 +10,7 @@ import re
 import pickle
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
+import io
 
 import pandas as pd
 import spacy
@@ -30,7 +31,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Intelligence Document Analyzer API", version="27.1.0 (Query Fix)")
+app = FastAPI(title="Intelligence Document Analyzer API", version="34.0.0 (Final Complete)")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # --- Global NLP Model & File Paths ---
@@ -105,33 +106,39 @@ class DocumentStore:
 
     def init_database(self):
         cursor = self._conn.cursor()
-        cursor.execute('''CREATE TABLE IF NOT EXISTS chunks
-                          (
-                              embedding_id
-                              INTEGER
-                              PRIMARY
-                              KEY,
-                              doc_id
-                              TEXT
-                              NOT
-                              NULL,
-                              filename
-                              TEXT
-                              NOT
-                              NULL,
-                              chunk_text
-                              TEXT
-                              NOT
-                              NULL,
-                              chunk_index
-                              INTEGER
-                              NOT
-                              NULL,
-                              created_at
-                              TIMESTAMP
-                              DEFAULT
-                              CURRENT_TIMESTAMP
-                          )''')
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS chunks
+                       (
+                           embedding_id
+                           INTEGER
+                           PRIMARY
+                           KEY,
+                           doc_id
+                           TEXT
+                           NOT
+                           NULL,
+                           filename
+                           TEXT
+                           NOT
+                           NULL,
+                           chunk_text
+                           TEXT
+                           NOT
+                           NULL,
+                           chunk_index
+                           INTEGER
+                           NOT
+                           NULL,
+                           month
+                           INTEGER,
+                           year
+                           INTEGER,
+                           created_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP
+                       )
+                       ''')
         cursor.execute('''CREATE TABLE IF NOT EXISTS documents
                           (
                               id
@@ -168,26 +175,41 @@ class DocumentStore:
                               NOT
                               NULL
                           )''')
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS monthly_detailed_stats
+                       (
+                           report_date
+                           DATE
+                           PRIMARY
+                           KEY,
+                           total_casualties
+                           INTEGER,
+                           civilian_casualties
+                           INTEGER,
+                           security_casualties
+                           INTEGER,
+                           robber_casualties
+                           INTEGER,
+                           total_arrests
+                           INTEGER,
+                           robber_arrests
+                           INTEGER,
+                           murderer_arrests
+                           INTEGER,
+                           rustler_arrests
+                           INTEGER,
+                           rapist_arrests
+                           INTEGER
+                       )
+                       ''')
         self._conn.commit()
         cursor.close()
         logger.info("Database initialized successfully.")
 
     def extract_and_store_incident_data(self, document_text: str):
-        logger.info("🧠 Starting DYNAMIC first-paragraph extraction...")
+        logger.info("Extracting main incident data...")
         month_map = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8,
                      'september': 9, 'october': 10, 'november': 11, 'december': 12}
-
-        def extract_two_numbers_from_paragraph(paragraph: str):
-            number_pattern = r'\((\d{3,4})\)'
-            matches = re.findall(number_pattern, paragraph)
-            valid_numbers = [int(d) for d in matches if 400 <= int(d) <= 1500]
-            if len(valid_numbers) < 2: return None, None
-            num1, num2 = valid_numbers[0], valid_numbers[1]
-            normalized_paragraph = re.sub(r'\s+', ' ', paragraph.lower())
-            if 'as against' in normalized_paragraph: return num1, num2
-            if 'from' in normalized_paragraph and 'to' in normalized_paragraph: return num2, num1
-            return None, None
-
         extracted_data = []
         header_pattern = r'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})'
         sections = re.split(header_pattern, document_text, flags=re.IGNORECASE)
@@ -200,31 +222,73 @@ class DocumentStore:
             first_paragraph = section_content[
                               :end_of_first_para_match.start()].strip() if end_of_first_para_match else section_content[
                                                                                                         :500].strip()
-            current_count, _ = extract_two_numbers_from_paragraph(first_paragraph)
+            number_pattern = r'\((\d{3,4})\)'
+            matches = [int(d) for d in re.findall(number_pattern, first_paragraph) if 400 <= int(d) <= 1500]
+            if len(matches) < 2: continue
+            normalized_paragraph = re.sub(r'\s+', ' ', first_paragraph.lower())
+            current_count = matches[1] if 'from' in normalized_paragraph and 'to' in normalized_paragraph else matches[
+                0]
             if current_count:
-                extracted_data.append((f"2020-{month_num:02d}-01", current_count))
+                extracted_data.append((f"{year_str}-{month_num:02d}-01", current_count))
         if extracted_data:
             with self._conn:
                 self._conn.executemany(
                     "INSERT OR REPLACE INTO incident_time_series (report_date, total_incidents) VALUES (?, ?)",
                     extracted_data)
-            logger.info(f"✅ Stored/updated {len(set(d[0] for d in extracted_data))} months of incident data.")
+            logger.info(f"Stored main incident data for {len(set(d[0] for d in extracted_data))} months.")
+
+    def extract_and_store_detailed_stats(self, document_text: str):
+        logger.info("Extracting detailed stats...")
+        month_map = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                     'september': 9, 'october': 10, 'november': 11, 'december': 12}
+        header_pattern = r'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})'
+        sections = re.split(header_pattern, document_text, flags=re.IGNORECASE)
+        stats_to_store = []
+        for i in range(1, len(sections), 3):
+            if i + 2 > len(sections): continue
+            month_str, year_str, section_content = sections[i].strip().lower(), sections[i + 1].strip(), sections[i + 2]
+            month_num = month_map.get(month_str)
+            if not month_num: continue
+            report_date = f"{year_str}-{month_num:02d}-01"
+
+            def find_stat(pattern):
+                match = re.search(pattern, section_content, re.IGNORECASE)
+                return int(match.group(1).replace(',', '')) if match else 0
+
+            total_cas = find_stat(r'\((\d+,?\d*)\)\s*persons,')
+            civ_cas = find_stat(r'\((\d+,?\d*)\)\s*civilians')
+            rob_cas = find_stat(r'\((\d+,?\d*)\)\s*armed\s+robbers') or find_stat(r'\((\d+,?\d*)\)\s*criminals')
+            sec_cas = find_stat(r'\((\d+,?\d*)\)\s*security\s+personnel')
+
+            total_arr = find_stat(r'arrest of about .*?\((\d+,?\d*)\)\s*suspects')
+            rob_arr = find_stat(r'\((\d+,?\d*)\)\s*armed\s+robbers')
+            mur_arr = find_stat(r'\((\d+)\)\s*murderers')
+            rus_arr = find_stat(r'\((\d+)\)\s*cattle\s+rustlers')
+            rap_arr = find_stat(r'\((\d+)\)\s*rapists')
+
+            stats_to_store.append(
+                (report_date, total_cas, civ_cas, sec_cas, rob_cas, total_arr, rob_arr, mur_arr, rus_arr, rap_arr))
+
+        if stats_to_store:
+            with self._conn:
+                self._conn.executemany(
+                    "INSERT OR REPLACE INTO monthly_detailed_stats (report_date, total_casualties, civilian_casualties, security_casualties, robber_casualties, total_arrests, robber_arrests, murderer_arrests, rustler_arrests, rapist_arrests) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    stats_to_store)
+            logger.info(f"Stored detailed stats for {len(stats_to_store)} months.")
 
     def store_document(self, doc_id: str, filename: str, content: str, analysis: DocumentAnalysis):
         with self._conn:
             self._conn.execute(
-                ''' INSERT OR REPLACE INTO documents (id, filename, file_type, content, analysis_data, confidence_score, intelligence_summary) VALUES (?, ?, ?, ?, ?, ?, ?) ''',
+                'INSERT OR REPLACE INTO documents (id, filename, file_type, content, analysis_data, confidence_score, intelligence_summary) VALUES (?, ?, ?, ?, ?, ?, ?)',
                 (doc_id, filename, filename.split('.')[-1].lower(), content, analysis.model_dump_json(),
                  analysis.confidence_score, analysis.intelligence_summary))
-        logger.info(f"Document {filename} stored successfully.")
 
-    def store_chunks(self, chunks: List[Dict]):
+    def store_chunks_with_metadata(self, chunks_with_metadata: List[Dict]):
         with self._conn:
             self._conn.executemany(
-                'INSERT INTO chunks (embedding_id, doc_id, filename, chunk_text, chunk_index) VALUES (?, ?, ?, ?, ?)',
-                [(c.get('embedding_id'), c.get('doc_id'), c.get('filename'), c.get('text'), c.get('chunk_index')) for c
-                 in chunks])
-        logger.info(f"Successfully stored {len(chunks)} chunks.")
+                'INSERT INTO chunks (embedding_id, doc_id, filename, chunk_text, chunk_index, month, year) VALUES (:embedding_id, :doc_id, :filename, :text, :chunk_index, :month, :year)',
+                chunks_with_metadata)
+        logger.info(f"Successfully stored {len(chunks_with_metadata)} chunks with metadata.")
 
     def get_chunk_by_embedding_id(self, embedding_id: int) -> Optional[Dict]:
         cursor = self._conn.cursor()
@@ -248,20 +312,16 @@ class DocumentStore:
 
     def get_document_by_month_and_year(self, year: int, month: int) -> Optional[AnalyzedDocument]:
         month_name = datetime(year, month, 1).strftime("%B").upper()
-        search_pattern = f'%ROBBERY FOR {month_name}, {year}%'
+        search_patterns = [f'%ROBBERY FOR {month_name}, {year}%', f'%ROBBERY FOR THE MONTH OF {month_name}, {year}%']
         cursor = self._conn.cursor()
-        cursor.execute("SELECT id FROM documents WHERE content LIKE ? ORDER BY created_at DESC LIMIT 1",
-                       (search_pattern,))
-        result = cursor.fetchone()
-        cursor.close()
-        if not result:
-            search_pattern_alt = f'%ROBBERY FOR THE MONTH OF {month_name}, {year}%'
-            cursor = self._conn.cursor()
-            cursor.execute("SELECT id FROM documents WHERE content LIKE ? ORDER BY created_at DESC LIMIT 1",
-                           (search_pattern_alt,))
+        for pattern in search_patterns:
+            cursor.execute("SELECT id FROM documents WHERE content LIKE ? ORDER BY created_at DESC LIMIT 1", (pattern,))
             result = cursor.fetchone()
-            cursor.close()
-        return self.get_document_by_id(result[0]) if result else None
+            if result:
+                cursor.close()
+                return self.get_document_by_id(result[0])
+        cursor.close()
+        return None
 
     def get_all_documents(self) -> List[Dict]:
         cursor = self._conn.cursor()
@@ -278,7 +338,6 @@ class DocumentStore:
             cursor = self._conn.cursor()
             cursor.execute('DELETE FROM chunks WHERE doc_id = ?', (doc_id,))
             cursor.execute('DELETE FROM documents WHERE id = ?', (doc_id,))
-            logger.info(f"Successfully deleted document {doc_id} and associated chunks.")
             return cursor.rowcount > 0
 
     def get_rag_stats(self) -> Dict:
@@ -292,8 +351,6 @@ class DocumentStore:
                 "model_name": "all-MiniLM-L6-v2"}
 
 
-# In main.py, replace the existing SimpleAnalyzer class with this complete version.
-
 class SimpleAnalyzer:
     def analyze_document(self, text: str, metadata: DocumentMetadata) -> DocumentAnalysis:
         global nlp
@@ -302,27 +359,18 @@ class SimpleAnalyzer:
         doc = nlp(text)
         text_lower = text.lower()
 
-        # --- Text Statistics ---
         text_statistics = TextStatistics(
             word_count=len([token for token in doc if not token.is_punct and not token.is_space]),
             sentence_count=len(list(doc.sents)), paragraph_count=len(text.split('\n\n')), language=doc.lang_)
 
-        # --- Entity Extraction ---
-        entities = {"persons": set(), "organizations": set(), "locations": set(), "dates": set(), "weapons": set(),
-                    "vehicles": set()}
+        entities = {"persons": set(), "organizations": set()}
         for ent in doc.ents:
             if ent.label_ == "PERSON" and len(ent.text.strip().split()) > 1:
                 entities["persons"].add(ent.text.strip())
             elif ent.label_ == "ORG" and ent.text.lower() not in ['the service', 'the federal government',
                                                                   'security agencies']:
                 entities["organizations"].add(ent.text.strip())
-            elif ent.label_ in ["GPE", "LOC"]:
-                entities["locations"].add(ent.text.strip())
-        for keyword in {'ak 47', 'ak47', 'rifles', 'pistols', 'guns', 'bomb', 'explosive', 'ammunition', 'pump action',
-                        'cartridges', 'ieds'}:
-            if keyword in text_lower: entities["weapons"].add(keyword.upper())
 
-        # --- Data-Driven Threat & Geographic Analysis ---
         nigerian_capitals = {'abia': {'lat': 5.5265, 'lng': 7.4906, 'name': 'Umuahia'},
                              'adamawa': {'lat': 9.2000, 'lng': 12.4833, 'name': 'Yola'},
                              'akwa ibom': {'lat': 5.0515, 'lng': 7.9307, 'name': 'Uyo'},
@@ -362,12 +410,11 @@ class SimpleAnalyzer:
                              'abuja': {'lat': 9.0765, 'lng': 7.3986, 'name': 'Abuja'}}
 
         incident_counts_by_state = {}
-        # Robust regex to capture state names and incident counts from table-like structures
-        table_row_pattern = re.compile(r'^\s*\d+\.?\s+([A-Za-z\s\(\)]+?)\s+(\d+)\s*$', re.MULTILINE)
+        table_row_pattern = re.compile(r'(\d+)\.\s*([A-Za-z\s\(\)]+?)\s+(\d+)')
         for match in table_row_pattern.finditer(text):
-            state_name = match.group(1).lower().replace("(fct)", "abuja").strip()
+            state_name = match.group(2).lower().replace("(fct)", "abuja").replace("akwa ibom", "akwalbom").strip()
             if state_name in nigerian_capitals:
-                incident_count = int(match.group(2))
+                incident_count = int(match.group(3))
                 incident_counts_by_state[state_name] = incident_counts_by_state.get(state_name, 0) + incident_count
 
         geocoded_points = []
@@ -388,37 +435,20 @@ class SimpleAnalyzer:
                                                   coordinates=geocoded_points, total_locations=len(geocoded_points))
         overall_threat = "High" if any(p['threat_level'] == 'high' for p in geocoded_points) else "Medium"
         sentiment_analysis = SentimentAnalysis(threat_level=overall_threat)
-
-        # --- Restore Crime Pattern & Numerical Intelligence Logic ---
-        crime_patterns = CrimePatterns(primary_crimes=sorted([
-            ("Armed Robbery", len(re.findall(r'armed robbery', text_lower))),
-            ("Murder", len(re.findall(r'murder', text_lower))),
-            ("Cattle Rustling", len(re.findall(r'cattle rustling', text_lower))),
-            ("Rape", len(re.findall(r'rape', text_lower)))
-        ], key=lambda x: x[1], reverse=True))
-
-        numerical_intelligence = NumericalIntelligence(
-            incidents=list(incident_counts_by_state.values()),
-            casualties=[int(num) for num in re.findall(r'\((\d+)\)\s+persons', text_lower)],
-            arrests=[int(num) for num in re.findall(r'arrest of about .*?\((\d+)\)', text_lower)]
-        )
-
+        crime_patterns = CrimePatterns(primary_crimes=sorted(
+            [("Armed Robbery", len(re.findall(r'armed robbery', text_lower))),
+             ("Murder", len(re.findall(r'murder', text_lower)))], key=lambda x: x[1], reverse=True))
+        numerical_intelligence = NumericalIntelligence(incidents=list(incident_counts_by_state.values()))
         intelligence_summary = f"Analysis complete. Overall threat: {overall_threat}. Identified {len(geocoded_points)} key locations with threat levels calculated based on {sum(incident_counts_by_state.values())} total reported incidents."
 
-        return DocumentAnalysis(
-            document_classification=DocumentClassification(),
-            entities={k: sorted(list(v)) for k, v in entities.items()},
-            sentiment_analysis=sentiment_analysis,
-            geographic_intelligence=geographic_intel,
-            temporal_intelligence=TemporalIntelligence(),
-            numerical_intelligence=numerical_intelligence,
-            crime_patterns=crime_patterns,
-            relationships=[],
-            text_statistics=text_statistics,
-            intelligence_summary=intelligence_summary,
-            confidence_score=0.9,
-            processing_time=time.time() - start_time
-        )
+        return DocumentAnalysis(document_classification=DocumentClassification(),
+                                entities={k: sorted(list(v)) for k, v in entities.items()},
+                                sentiment_analysis=sentiment_analysis, geographic_intelligence=geographic_intel,
+                                temporal_intelligence=TemporalIntelligence(),
+                                numerical_intelligence=numerical_intelligence, crime_patterns=crime_patterns,
+                                relationships=[], text_statistics=text_statistics,
+                                intelligence_summary=intelligence_summary, confidence_score=0.9,
+                                processing_time=time.time() - start_time)
 
 
 class SimpleRAG:
@@ -439,42 +469,81 @@ class SimpleRAG:
         return faiss.IndexFlatIP(384)
 
     def add_document(self, doc_id: str, filename: str, content: str):
+        month_map = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                     'september': 9, 'october': 10, 'november': 11, 'december': 12}
         try:
             tokenizer = tiktoken.encoding_for_model("gpt-3.5-turbo")
-            tokens = tokenizer.encode(content)
-            chunks, i, max_tokens, overlap = [], 0, 300, 50
-            while i < len(tokens):
-                chunk_tokens = tokens[i: i + max_tokens]
-                if chunk_text := tokenizer.decode(chunk_tokens).strip(): chunks.append(chunk_text)
-                i += max_tokens - overlap
-            if not chunks: return
-            embeddings = self.embedding_model.encode(chunks);
+            header_pattern = r'RETURNS ON ARMED BANDITRY\s*/?\s*ROBBERY\s*FOR (?:THE MONTH OF\s*)?([A-Z]+)[,\s]*(\d{4})'
+            sections = re.split(header_pattern, content, flags=re.IGNORECASE)
+            all_chunks_with_metadata = []
+            for i in range(1, len(sections), 3):
+                if i + 2 > len(sections): continue
+                month_str, year_str, section_content = sections[i].strip().lower(), sections[i + 1].strip(), sections[
+                    i + 2]
+                month_num = month_map.get(month_str)
+                if not month_num: continue
+                tokens = tokenizer.encode(section_content)
+                j, max_tokens, overlap = 0, 300, 50
+                while j < len(tokens):
+                    chunk_tokens = tokens[j: j + max_tokens]
+                    if chunk_text := tokenizer.decode(chunk_tokens).strip():
+                        all_chunks_with_metadata.append(
+                            {"text": chunk_text, "month": month_num, "year": int(year_str), "doc_id": doc_id,
+                             "filename": filename})
+                    j += max_tokens - overlap
+            if not all_chunks_with_metadata: return
+            embeddings = self.embedding_model.encode([c['text'] for c in all_chunks_with_metadata])
             faiss.normalize_L2(embeddings)
             start_id = self.index.ntotal
             self.index.add(embeddings.astype('float32'));
             faiss.write_index(self.index, self.index_path)
-            self.store.store_chunks(
-                [{'embedding_id': start_id + i, 'doc_id': doc_id, 'filename': filename, 'text': text, 'chunk_index': i}
-                 for i, text in enumerate(chunks)])
+            for i, chunk_meta in enumerate(all_chunks_with_metadata):
+                chunk_meta.update({'embedding_id': start_id + i, 'chunk_index': i})
+            self.store.store_chunks_with_metadata(all_chunks_with_metadata)
         except Exception as e:
-            logger.error(f"Error adding document to RAG: {e}")
+            logger.error(f"Error adding document to RAG: {e}", exc_info=True)
 
-    def query(self, query_text: str, k: int = 5) -> Dict:
+    def query(self, query_text: str, k: int = 5, filters: Optional[Dict] = None,
+              keyword_search: Optional[str] = None) -> Dict:
         if self.index.ntotal == 0: return {"response": "No documents in knowledge base.", "sources": [],
                                            "no_results": True, "error": False}
+
+        allowed_ids = None
+        if filters or keyword_search:
+            logger.info(f"Applying filters: {filters}, Keyword: {keyword_search}")
+            query_parts, params = [], []
+            if filters:
+                if 'month' in filters: query_parts.append("month = ?"); params.append(filters['month'])
+                if 'year' in filters: query_parts.append("year = ?"); params.append(filters['year'])
+            if keyword_search:
+                query_parts.append("chunk_text LIKE ?")
+                params.append(f"%{keyword_search}%")
+
+            with self.store._conn:
+                cursor = self.store._conn.cursor()
+                sql_query = f"SELECT embedding_id FROM chunks WHERE {' AND '.join(query_parts)}"
+                results = cursor.execute(sql_query, params).fetchall()
+                allowed_ids = {row[0] for row in results}
+            if not allowed_ids: return {"response": f"No information found for the specified criteria.", "sources": [],
+                                        "no_results": True, "error": False}
+
         query_embedding = self.embedding_model.encode([query_text]);
         faiss.normalize_L2(query_embedding)
-        similarities, indices = self.index.search(query_embedding.astype('float32'), min(k, self.index.ntotal))
-        retrieved = []
-        for idx, similarity in zip(indices[0], similarities[0]):
-            if idx == -1: break
-            chunk = self.store.get_chunk_by_embedding_id(int(idx))
-            if chunk:
-                chunk['similarity'] = float(similarity)
-                chunk['rank'] = len(retrieved) + 1
-                retrieved.append(chunk)
+        search_k = self.index.ntotal if allowed_ids else min(k * 5, self.index.ntotal)
+        similarities, indices = self.index.search(query_embedding.astype('float32'), k=search_k)
+
+        final_indices, rank = [], 0
+        for idx in indices[0]:
+            if rank >= k: break
+            if idx != -1 and (allowed_ids is None or idx in allowed_ids):
+                final_indices.append(idx)
+                rank += 1
+
+        retrieved = [chunk for idx in final_indices if
+                     idx != -1 and (chunk := self.store.get_chunk_by_embedding_id(int(idx)))]
         if not retrieved: return {"response": "Could not find relevant information.", "sources": [], "no_results": True,
                                   "error": False}
+
         context = "\n\n---\n\n".join([f"Source: {c['filename']}\n{c['text']}" for c in retrieved])
         client = openai.OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
         response = client.chat.completions.create(model="phi3", messages=[{"role": "system",
@@ -482,10 +551,10 @@ class SimpleRAG:
                                                                           {"role": "user",
                                                                            "content": f"CONTEXT:\n{context}\n\nQUESTION: {query_text}\n\nANSWER:"}],
                                                   max_tokens=1000, temperature=0.1)
+
         return {"response": response.choices[0].message.content,
-                "sources": [{"filename": c['filename'], "similarity": c['similarity'], "rank": c['rank']} for c in
-                            retrieved], "context_chunks": len(retrieved), "timestamp": datetime.now().isoformat(),
-                "model": "phi3", "no_results": False, "error": False}
+                "sources": [{"filename": c['filename']} for c in retrieved], "context_chunks": len(retrieved),
+                "timestamp": datetime.now().isoformat(), "model": "phi3", "no_results": False, "error": False}
 
 
 @app.on_event("startup")
@@ -502,23 +571,39 @@ def on_startup():
     logger.info("Intelligence Document Analyzer started.")
 
 
-def extract_text(file: UploadFile) -> str:
-    ext = file.filename.lower().split('.')[-1]
-    if ext == 'pdf': return "".join(page.extract_text() for page in PyPDF2.PdfReader(file.file).pages)
-    if ext == 'docx': return "\n".join(p.text for p in docx.Document(file.file).paragraphs)
-    if ext == 'txt': return file.file.read().decode('utf-8', errors='ignore')
-    raise HTTPException(400, "Unsupported file type")
+def extract_text(filename: str, content_bytes: bytes) -> str:
+    ext = filename.lower().split('.')[-1]
+    try:
+        if ext == 'pdf':
+            pdf_file = io.BytesIO(content_bytes)
+            return "".join(page.extract_text() for page in PyPDF2.PdfReader(pdf_file).pages)
+        if ext == 'docx':
+            docx_file = io.BytesIO(content_bytes)
+            doc = docx.Document(docx_file)
+            full_text = []
+            for para in doc.paragraphs:
+                full_text.append(para.text)
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        full_text.append(cell.text)
+            return '\n'.join(full_text)
+        if ext == 'txt':
+            return content_bytes.decode('utf-8', errors='ignore')
+    except Exception as e:
+        logger.error(f"Error processing {ext.upper()} file: {e}")
+        raise HTTPException(status_code=400, detail=f"Could not process the {ext.upper()} file.")
+    raise HTTPException(400, f"Unsupported file type: {ext}")
 
 
-# --- API Endpoints ---
 @app.post("/upload-document", response_model=AnalyzedDocument)
 async def handle_upload(file: UploadFile = File(...)):
     try:
         content_bytes = await file.read()
-        await file.seek(0)
-        text = extract_text(file)
-        if not text.strip(): raise HTTPException(400, "Document is empty")
+        text = extract_text(file.filename, content_bytes)
+        if not text.strip(): raise HTTPException(400, "Document is empty or could not be read.")
         app.state.store.extract_and_store_incident_data(text)
+        app.state.store.extract_and_store_detailed_stats(text)
         doc_id = str(uuid.uuid4())
         metadata = DocumentMetadata(filename=file.filename, file_type=file.filename.split('.')[-1].lower(),
                                     uploaded_at=datetime.now().isoformat(), file_size=len(content_bytes))
@@ -529,6 +614,7 @@ async def handle_upload(file: UploadFile = File(...)):
                                 analysis=analysis)
     except Exception as e:
         logger.error(f"Upload failed: {e}", exc_info=True)
+        if isinstance(e, HTTPException): raise e
         raise HTTPException(status_code=500, detail=f"An error occurred during upload: {e}")
 
 
@@ -640,13 +726,71 @@ async def get_rag_stats_endpoint():
 
 @app.post("/query", response_model=QueryResponse)
 async def handle_query(request: QueryRequest):
+    query = request.query.lower()
+
+    month_map = {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8,
+                 'september': 9, 'october': 10, 'november': 11, 'december': 12}
+    filters = {}
+    for month_name, month_num in month_map.items():
+        if month_name in query:
+            filters['month'] = f"{month_num:02d}"
+            break
+    if '2020' in query: filters['year'] = '2020'
+
+    numerical_phrases = ['how many', 'what was the total', 'what is the total', 'total number of', 'sum of', 'count of']
+    is_numerical = any(phrase in query for phrase in numerical_phrases)
+    is_assessment = any(kw in query for kw in ['assessment', 'summary', 'conclusion', 'assess'])
+
+    if is_numerical:
+        logger.info(f"Handling numerical query with filters: {filters}")
+
+        db_column_map = {'casualties': 'total_casualties', 'killed': 'total_casualties',
+                         'civilians': 'civilian_casualties', 'security': 'security_casualties',
+                         'arrests': 'total_arrests', 'arrested': 'total_arrests'}
+        target_column = next((col for kw, col in db_column_map.items() if kw in query), None)
+
+        table_to_query = 'monthly_detailed_stats'
+        if 'incident' in query:
+            target_column = 'total_incidents'
+            table_to_query = 'incident_time_series'
+
+        if target_column:
+            try:
+                where_clauses, params = [], []
+                if 'month' in filters: where_clauses.append("strftime('%m', report_date) = ?"); params.append(
+                    filters['month'])
+                if 'year' in filters: where_clauses.append("strftime('%Y', report_date) = ?"); params.append(
+                    filters['year'])
+                where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+                with sqlite3.connect(DB_PATH) as conn:
+                    result = conn.execute(f"SELECT SUM({target_column}) FROM {table_to_query} {where_sql}",
+                                          params).fetchone()
+
+                total = result[0] if result and result[0] is not None else 0
+                return QueryResponse(
+                    response=f"Based on the processed documents, the total number of {target_column.replace('_', ' ')} for the specified period is {total}.",
+                    sources=[{"filename": "Database Aggregate"}], query=request.query,
+                    timestamp=datetime.now().isoformat(), model="SQL Database")
+            except Exception as e:
+                logger.error(f"SQL query failed: {e}")
+                return QueryResponse(response="Could not calculate the answer from the database.", sources=[],
+                                     error=True)
+
+    keyword_search = "ASSESSMENT" if is_assessment else None
+    logger.info(f"Handling descriptive query. Filters: {filters}, Keyword Search: {keyword_search}")
     try:
-        result = app.state.rag_system.query(request.query, request.max_results)
+        rag_filters = {}
+        if 'month' in filters: rag_filters['month'] = int(filters['month'])
+        if 'year' in filters: rag_filters['year'] = int(filters['year'])
+
+        result = app.state.rag_system.query(request.query, request.max_results,
+                                            filters=rag_filters if rag_filters else None, keyword_search=keyword_search)
         result['query'] = request.query
         return QueryResponse(**result)
     except Exception as e:
-        logger.error(f"Query error: {e}")
-        return QueryResponse(response=f"Query error: {str(e)}", sources=[], error=True)
+        logger.error(f"RAG query failed: {e}", exc_info=True)
+        return QueryResponse(response=f"An error occurred during the query: {e}", sources=[], error=True)
 
 
 if __name__ == "__main__":
