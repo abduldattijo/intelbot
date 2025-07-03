@@ -9,14 +9,12 @@
     <meta name="keywords" content="intelligence, security, document analysis, AI, machine learning, geospatial analysis" />
     <meta name="author" content="Intelligence Document Analyzer" />
 
-    <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://intelligence-analyzer.com/" />
     <meta property="og:title" content="Intelligence Document Analyzer" />
     <meta property="og:description" content="AI-Powered Security Intelligence Platform for Document Analysis" />
     <meta property="og:image" content="%PUBLIC_URL%/og-image.png" />
 
-    <!-- Twitter -->
     <meta property="twitter:card" content="summary_large_image" />
     <meta property="twitter:url" content="https://intelligence-analyzer.com/" />
     <meta property="twitter:title" content="Intelligence Document Analyzer" />
@@ -26,17 +24,16 @@
     <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
     <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
 
-    <!-- Preconnect to external services for performance -->
     <link rel="preconnect" href="https://api.mapbox.com" />
     <link rel="dns-prefetch" href="https://api.mapbox.com" />
 
-    <!-- Fonts (if using external fonts) -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.9.1/mapbox-gl.css" rel="stylesheet">
+
     <title>Intelligence Document Analyzer - AI-Powered Security Intelligence Platform</title>
 
-    <!-- Inline critical CSS for performance -->
     <style>
       /* Critical loading styles */
       .loading-spinner {
@@ -96,7 +93,6 @@
       </div>
     </noscript>
 
-    <!-- Initial loading screen -->
     <div id="initial-loading">
       <div class="loading-content">
         <div class="loading-title">Intelligence Document Analyzer</div>
@@ -107,7 +103,6 @@
 
     <div id="root"></div>
 
-    <!-- Remove loading screen once React app is loaded -->
     <script>
       window.addEventListener('load', function() {
         setTimeout(function() {

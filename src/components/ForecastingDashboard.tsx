@@ -1,8 +1,8 @@
-// src/components/ForecastingDashboard.tsx - AI-Powered Forecasting Dashboard (OPERATIONAL)
+// src/components/ForecastingDashboard.tsx - AI-Powered Forecasting Dashboard (FIXED)
 
 import React, { useState, useEffect } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, AreaChart, Area } from 'recharts';
-import { TrendingUp, TrendingDown, Brain, AlertTriangle, Target, Activity, Zap } from 'lucide-react';
+import { TrendingUp, TrendingDown, Brain, AlertTriangle, Target, Activity, Zap, Loader2 } from 'lucide-react';
 
 interface ForecastingData {
   date: string;
@@ -60,12 +60,10 @@ const ForecastingDashboard: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="p-8">
+      <div className="p-8 flex justify-center items-center">
         <div className="text-center">
-          <div className="inline-flex items-center px-4 py-2 bg-blue-50 border border-blue-200 rounded-lg">
-            <Brain className="animate-pulse h-5 w-5 text-blue-600 mr-2" />
-            <span className="text-blue-700 font-medium">Loading historical data and generating live forecast...</span>
-          </div>
+          <Loader2 className="h-8 w-8 mx-auto animate-spin text-blue-600" />
+          <p className="mt-2 text-gray-600">Loading historical data and generating live forecast...</p>
         </div>
       </div>
     );
@@ -82,7 +80,7 @@ const ForecastingDashboard: React.FC = () => {
           <p className="text-red-700 mt-2">{error}</p>
           <button
             onClick={fetchForecastingData}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
           >
             Retry Forecasting
           </button>
@@ -91,6 +89,7 @@ const ForecastingDashboard: React.FC = () => {
     );
   }
 
+  // <<< FIX: Use Optional Chaining (?.) and Nullish Coalescing (??) for safety >>>
   return (
     <div className="p-6 space-y-6">
       <div className="flex justify-between items-center">
@@ -105,83 +104,46 @@ const ForecastingDashboard: React.FC = () => {
         </div>
       </div>
 
-      {threatMetrics && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Current Threat Level</p>
-                <p className={`text-2xl font-bold ${
-                  threatMetrics.current_threat_level >= 70 ? 'text-red-600' :
-                  threatMetrics.current_threat_level >= 50 ? 'text-orange-600' : 'text-green-600'
-                }`}>
-                  {threatMetrics.current_threat_level.toFixed(1)}%
-                </p>
-              </div>
-              <Target className={`h-8 w-8 ${
-                threatMetrics.current_threat_level >= 70 ? 'text-red-500' :
-                threatMetrics.current_threat_level >= 50 ? 'text-orange-500' : 'text-green-500'
-              }`} />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Change from Prior Month</p>
-                <p className={`text-2xl font-bold flex items-center ${threatMetrics.predicted_change > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  {threatMetrics.predicted_change > 0 ? '+' : ''}{threatMetrics.predicted_change.toFixed(1)}%
-                  {getTrendIcon(threatMetrics.predicted_change)}
-                </p>
-              </div>
-              <Activity className="h-8 w-8 text-blue-500" />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Model Confidence</p>
-                <p className="text-2xl font-bold text-green-600">
-                  {threatMetrics.confidence_score.toFixed(1)}%
-                </p>
-              </div>
-              <Brain className="h-8 w-8 text-green-500" />
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Identified Risk Factors</p>
-                <p className="text-2xl font-bold text-gray-600">
-                  {threatMetrics.risk_factors.length}
-                </p>
-              </div>
-              <Zap className="h-8 w-8 text-gray-500" />
-            </div>
-          </div>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <p className="text-sm font-medium text-gray-600">Current Threat Level</p>
+          <p className={`text-2xl font-bold ${ (threatMetrics?.current_threat_level ?? 0) >= 70 ? 'text-red-600' : (threatMetrics?.current_threat_level ?? 0) >= 50 ? 'text-orange-600' : 'text-green-600'}`}>
+            {threatMetrics?.current_threat_level?.toFixed(1) ?? '0.0'}%
+          </p>
         </div>
-      )}
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <p className="text-sm font-medium text-gray-600">Change from Prior Month</p>
+          <p className={`text-2xl font-bold flex items-center ${(threatMetrics?.predicted_change ?? 0) > 0 ? 'text-red-600' : 'text-green-600'}`}>
+            {(threatMetrics?.predicted_change ?? 0) > 0 ? '+' : ''}{threatMetrics?.predicted_change?.toFixed(1) ?? '0.0'}%
+            {getTrendIcon(threatMetrics?.predicted_change ?? 0)}
+          </p>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <p className="text-sm font-medium text-gray-600">Model Confidence</p>
+          <p className="text-2xl font-bold text-green-600">
+            {threatMetrics?.confidence_score?.toFixed(1) ?? '0.0'}%
+          </p>
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow border">
+            <p className="text-sm font-medium text-gray-600">Identified Risk Factors</p>
+            <p className="text-2xl font-bold text-gray-600">
+              {threatMetrics?.risk_factors?.length ?? 0}
+            </p>
+        </div>
+      </div>
 
       <div className="bg-white p-6 rounded-lg shadow border">
         <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
           <TrendingUp className="h-5 w-5 text-blue-600 mr-2" />
           Incident Forecast Model
         </h3>
-        <div className="h-80">
+        <div style={{ height: '320px' }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={forecastData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis
-                dataKey="date"
-                tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })}
-              />
+              <XAxis dataKey="date" tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' })} />
               <YAxis domain={['dataMin - 50', 'dataMax + 50']} />
-              <Tooltip
-                labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })}
-                formatter={(value: number, name: string) => [value, name === 'incidents' ? 'Actual Incidents' : 'Forecasted Incidents']}
-              />
+              <Tooltip labelFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' })} />
               <Legend />
               <Line connectNulls type="monotone" dataKey="incidents" stroke="#3b82f6" strokeWidth={2} name="Actual Incidents" />
               <Line connectNulls type="monotone" dataKey="predicted_incidents" stroke="#ef4444" strokeWidth={2} strokeDasharray="5 5" name="Forecasted Incidents" />
@@ -190,39 +152,30 @@ const ForecastingDashboard: React.FC = () => {
         </div>
       </div>
 
-      {threatMetrics && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <AlertTriangle className="h-5 w-5 text-red-600 mr-2" />
-              Key Risk Factors (from Reports)
-            </h3>
-            <div className="space-y-3">
-              {threatMetrics.risk_factors.map((factor, index) => (
-                <div key={index} className="flex items-start p-3 bg-red-50 border border-red-200 rounded-lg">
-                  <AlertTriangle className="h-4 w-4 text-red-600 mr-3 flex-shrink-0 mt-1" />
-                  <span className="text-red-800 text-sm">{factor}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="bg-white p-6 rounded-lg shadow border">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-              <Brain className="h-5 w-5 text-green-600 mr-2" />
-              Strategic Recommendations (from Reports)
-            </h3>
-            <div className="space-y-3">
-              {threatMetrics.recommendations.map((recommendation, index) => (
-                <div key={index} className="flex items-start p-3 bg-green-50 border border-green-200 rounded-lg">
-                  <Target className="h-4 w-4 text-green-600 mr-3 flex-shrink-0 mt-1" />
-                  <span className="text-green-800 text-sm">{recommendation}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow border">
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Key Risk Factors</h3>
+          <ul className="space-y-2">
+            {(threatMetrics?.risk_factors ?? ['No data']).map((factor, index) => (
+              <li key={index} className="flex items-start text-sm">
+                <AlertTriangle className="h-4 w-4 text-red-500 mr-2 mt-0.5 flex-shrink-0" />
+                <span>{factor}</span>
+              </li>
+            ))}
+          </ul>
         </div>
-      )}
+        <div className="bg-white p-6 rounded-lg shadow border">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">Strategic Recommendations</h3>
+            <ul className="space-y-2">
+            {(threatMetrics?.recommendations ?? ['No data']).map((rec, index) => (
+              <li key={index} className="flex items-start text-sm">
+                <Target className="h-4 w-4 text-green-500 mr-2 mt-0.5 flex-shrink-0" />
+                <span>{rec}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
     </div>
   );
 };
