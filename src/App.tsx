@@ -1,4 +1,4 @@
-// src/App.tsx - FINAL AND COMPLETE
+// src/App.tsx - FINAL AND COMPLETE - Multi-Crime Support
 
 import React, { useState } from 'react';
 import './App.css';
@@ -48,7 +48,6 @@ export interface IntelligenceDocument {
       states: string[];
       cities: string[];
       countries: string[];
-      // <<< FIX: Added 'threat_level' to the coordinate object definition >>>
       coordinates: Array<{
         latitude: number;
         longitude: number;
@@ -125,8 +124,8 @@ const App: React.FC = () => {
     { id: 'documents' as TabType, label: 'Document Library', icon: List, description: 'Manage processed documents' },
     { id: 'query' as TabType, label: 'Query Interface', icon: Search, description: 'AI-powered document queries' },
     { id: 'results' as TabType, label: 'Analysis Results', icon: Brain, description: 'View analysis results and insights' },
-    { id: 'comparison' as TabType, label: 'Monthly Comparison', icon: BarChart, description: 'Compare two months of data' },
-    { id: 'forecasting' as TabType, label: 'Forecasting', icon: BarChart3, description: 'AI predictions and trends' },
+    { id: 'comparison' as TabType, label: 'Crime Comparison', icon: BarChart, description: 'Compare monthly crime data by type' },
+    { id: 'forecasting' as TabType, label: 'Crime Forecasting', icon: BarChart3, description: 'AI predictions and trends by crime type' },
     { id: 'map' as TabType, label: 'Geospatial Map', icon: Map, description: 'Geographic intelligence visualization' },
   ];
 
@@ -138,13 +137,13 @@ const App: React.FC = () => {
             <div className="flex items-center">
               <Brain className="h-8 w-8 text-blue-600 mr-3" />
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">Intelligence Document Analyzer</h1>
-                <p className="text-sm text-gray-600">AI-Powered Security Intelligence Platform</p>
+                <h1 className="text-2xl font-bold text-gray-900">Multi-Crime Intelligence Analyzer</h1>
+                <p className="text-sm text-gray-600">AI-Powered Security Intelligence Platform - All Crime Types Supported</p>
               </div>
             </div>
             <div className="flex items-center space-x-2 text-sm text-gray-500">
                 <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>System Online</span>
+                <span>Multi-Crime System Online</span>
             </div>
           </div>
         </div>
@@ -185,7 +184,7 @@ const App: React.FC = () => {
 
       <footer className="bg-white border-t border-gray-200 mt-12">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <p className="text-center text-sm text-gray-500">© 2025 Intelligence Document Analyzer Platform</p>
+          <p className="text-center text-sm text-gray-500">© 2025 Multi-Crime Intelligence Document Analyzer Platform</p>
         </div>
       </footer>
     </div>
